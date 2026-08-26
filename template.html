@@ -1,0 +1,3992 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1e3a5f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="境界復元">
+<title>境界復元支援アプリ（地理院地図版）</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.88em' font-size='88'%3E📍%3C/text%3E%3C/svg%3E">
+<!-- ライブラリは本ファイルに同梱（CDN不要・オフラインで動作） -->
+<script><!--@LIB:geotiff--></script>
+<script><!--@LIB:proj4--></script>
+<script><!--@LIB:encoding--></script>
+<style>
+  /* ===== 文字サイズ（スマホ用に大きめ。設定の「文字サイズ」で さらに 大／特大 へ） ===== */
+  :root { --fsBtn:13px; --fsIc:23px; --fsGl:11px; --fsSel:16px; --fsNum:16px; --fsNow:19px;
+          --fsTab:14px; --fsTic:18px; --fsBig:18px; --fsMenu:17px; --fsForm:15px;
+          --rbW:56px; --rrH:62px; }
+  html[data-fs="l"]  { --fsBtn:15px; --fsIc:25px; --fsGl:12px; --fsSel:17px; --fsNum:17px; --fsNow:21px;
+          --fsTab:15px; --fsTic:19px; --fsBig:20px; --fsMenu:19px; --fsForm:16px;
+          --rbW:62px; --rrH:68px; }
+  html[data-fs="xl"] { --fsBtn:17px; --fsIc:28px; --fsGl:13px; --fsSel:19px; --fsNum:19px; --fsNow:23px;
+          --fsTab:16px; --fsTic:20px; --fsBig:22px; --fsMenu:21px; --fsForm:18px;
+          --rbW:70px; --rrH:76px; }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { height:100%; overflow:hidden; font-family:"Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif; }
+  #app { display:flex; flex-direction:column; height:100%; }
+  header { background:#1e3a5f; color:#fff; padding:6px 10px; display:flex; align-items:center; gap:8px; font-size:14px; z-index:10; }
+  header .title { font-weight:bold; font-size:15px; }
+  #gpsInfo { margin-left:auto; text-align:right; line-height:1.3; font-size:12.5px; }
+  #gpsInfo .acc-good { color:#7CFC90; }
+  #gpsInfo .acc-bad { color:#ffb3b3; }
+  #mapWrap { flex:1; position:relative; overflow:hidden; background:#d8d8d8; }
+  #map { position:absolute; inset:0; touch-action:none; }
+  #followBtn { position:absolute; right:10px; bottom:10px; width:46px; height:46px; border-radius:50%;
+    border:none; background:#fff; box-shadow:0 2px 6px rgba(0,0,0,.3); font-size:22px; z-index:5; }
+  #followBtn.on { background:#1e73d2; color:#fff; }
+  #zoomBox { position:absolute; right:10px; bottom:64px; display:flex; flex-direction:column;
+    border-radius:8px; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,.3); z-index:5; }
+  #zoomBox button { width:46px; height:42px; border:none; background:#fff; font-size:22px; color:#333; }
+  #zoomBox button:active { background:#dbe9fb; }
+  #zoomBox button+button { border-top:1px solid #ddd; }
+  #zoomLevel { position:absolute; right:10px; bottom:152px; background:rgba(255,255,255,.9);
+    border-radius:6px; padding:3px 7px; font-size:12px; color:#333; z-index:5; line-height:1.35;
+    text-align:right; box-shadow:0 1px 4px rgba(0,0,0,.2); }
+  /* 右端は現在地追従・拡大縮小ボタンの列。重ならないよう右側に余白を確保する */
+  #actionbar { position:absolute; left:0; right:0; bottom:0; display:flex; gap:8px; padding:8px 62px 8px 10px;
+    justify-content:center; z-index:5; pointer-events:none; }
+  #actionbar > * { pointer-events:auto; }
+  .colwrap { display:flex; flex-direction:column; gap:8px; align-items:center; max-width:100%; }
+  .rowwrap { display:flex; gap:6px; align-items:center; max-width:100%; }
+  .bigbtn { border:none; border-radius:24px; padding:12px 16px; font-size:var(--fsBig); font-weight:bold;
+    box-shadow:0 2px 8px rgba(0,0,0,.35); max-width:100%; line-height:1.3;
+    white-space:normal; overflow:hidden; }
+  .bigbtn.sm { padding:11px 15px; font-size:calc(var(--fsBig) - 1px); }
+  .bigbtn.primary { background:#d9534f; color:#fff; }
+  .bigbtn.ok { background:#2e8b57; color:#fff; }
+  .bigbtn.gray { background:#fff; color:#333; }
+  /* 大ボタンの左右に置く操作ボタン */
+  .sidebtn { flex:none; border:none; border-radius:20px; background:rgba(255,255,255,.96);
+    color:#1e3a5f; box-shadow:0 2px 8px rgba(0,0,0,.3); padding:6px 6px; min-width:46px;
+    display:flex; flex-direction:column; align-items:center; line-height:1.1; }
+  .sidebtn .si { font-size:var(--fsBig); }
+  .sidebtn .sl { font-size:calc(var(--fsBig) - 8px); white-space:nowrap; }
+  .sidebtn.off { opacity:.4; }
+  #stakeBar { display:flex; align-items:center; gap:6px; background:rgba(255,255,255,.95);
+    border-radius:20px; padding:6px 12px; box-shadow:0 2px 8px rgba(0,0,0,.3); font-size:var(--fsForm); }
+  #stakeBar select { font-size:var(--fsSel); padding:6px; border:1px solid #bbb; border-radius:6px; max-width:190px; }
+  #memoTools { display:flex; gap:6px; align-items:center; background:rgba(255,255,255,.95);
+    border-radius:24px; padding:6px 10px; box-shadow:0 2px 8px rgba(0,0,0,.3); }
+  .colorBtn { width:34px; height:34px; border-radius:50%; border:3px solid transparent; }
+  .colorBtn.sel { border-color:#1e73d2; }
+  /* ===== リボン（TREND-ONE風・画面下） =====
+     下段がタブ、その上がコマンド行。親指が届く位置に置く。 */
+  #ribbon { background:#f4f6f9; border-top:1px solid #b9c2cc; z-index:10; flex:none;
+    box-shadow:0 -2px 6px rgba(0,0,0,.08); }
+  #ribbonWrap { position:relative; }
+  #ribbonCmd { display:flex; align-items:stretch; gap:0; overflow-x:auto; overflow-y:hidden;
+    padding:6px 6px 2px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  #ribbonCmd::-webkit-scrollbar { height:0; }
+  /* 隠れているコマンドがあることを示す（現場で機能を見落とさないように） */
+  .redge { position:absolute; top:0; bottom:14px; width:30px; pointer-events:none;
+    display:none; align-items:center; justify-content:center; font-size:22px; color:#6b7a8b; }
+  .redge.on { display:flex; }
+  #redgeR { right:0; background:linear-gradient(to right, rgba(244,246,249,0), #f4f6f9 65%); }
+  #redgeL { left:0;  background:linear-gradient(to left,  rgba(244,246,249,0), #f4f6f9 65%); }
+  #ribbonCmd.hide { display:none; }
+  .rgroup { display:flex; flex-direction:column; align-items:center; flex:none;
+    padding:0 6px; border-right:1px solid #d7dde4; }
+  .rgroup:last-child { border-right:none; }
+  .rgroup .rrow { display:flex; align-items:flex-start; gap:4px; min-height:var(--rrH); }
+  .rgroup .glabel { font-size:var(--fsGl); color:#7a8694; margin-top:2px; letter-spacing:.5px; white-space:nowrap; }
+  .rbtn { display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+    min-width:var(--rbW); padding:5px 6px 4px; border:1px solid transparent; border-radius:6px;
+    background:none; color:#22303d; font-size:var(--fsBtn); line-height:1.25; white-space:nowrap; }
+  .rbtn .ic { font-size:var(--fsIc); line-height:1.1; margin-bottom:2px; }
+  .rbtn:active { background:#dbe9fb; border-color:#9dc3ee; }
+  .rbtn.on { background:#dbe9fb; border-color:#1e73d2; color:#12508f; font-weight:bold; }
+  .rbtn.danger { color:#b3261e; }
+  .rbtn[disabled] { opacity:.35; }
+  .rbtn.wide { min-width:auto; }
+  .rsel { display:flex; flex-direction:column; align-items:center; padding:5px 4px 4px; }
+  .rsel span { font-size:var(--fsGl); color:#7a8694; margin-bottom:3px; }
+  .rsel select { font-size:var(--fsSel); padding:6px 4px; border:1px solid #b9c2cc; border-radius:5px;
+    max-width:128px; background:#fff; }
+  .rsel input.rnum { font-size:var(--fsNum); padding:6px 4px; border:1px solid #b9c2cc; border-radius:5px;
+    width:74px; text-align:center; background:#fff; }
+  .rsel .rnow { font-size:var(--fsNow); font-weight:700; color:#1e73d2; background:#eaf2fd;
+    border:1px solid #b7d3f5; border-radius:5px; padding:4px 10px; min-width:48px; text-align:center; }
+  .rbadge { position:absolute; top:2px; right:2px; background:#d9534f; color:#fff; font-size:10.5px;
+    min-width:17px; height:17px; border-radius:9px; padding:0 4px; line-height:17px; }
+  .rbtn { position:relative; }
+  #ribbonTabs { display:flex; background:#1e3a5f; }
+  #ribbonTabs button { flex:1; border:none; background:none; color:rgba(255,255,255,.72);
+    padding:9px 0 10px; font-size:var(--fsTab); font-weight:bold; border-top:3px solid transparent; }
+  #ribbonTabs button.active { color:#fff; background:#f4f6f9; color:#12508f; border-top-color:#4a9bf0; }
+  #ribbonTabs button .tic { display:block; font-size:var(--fsTic); margin-bottom:1px; font-weight:normal; }
+  .panel { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:100; display:none; }
+  .panel.show { display:block; }
+  .panel .sheet { position:absolute; bottom:0; left:0; right:0; max-height:85%; overflow-y:auto;
+    background:#fff; border-radius:14px 14px 0 0; padding:14px; }
+  .sheet h2 { font-size:calc(var(--fsMenu) + 1px); margin-bottom:10px; color:#1e3a5f; display:flex; align-items:center; }
+  .sheet h2 .close { margin-left:auto; border:none; background:#eee; border-radius:50%; width:34px; height:34px; font-size:17px; }
+  .menuItem { display:block; width:100%; text-align:left; border:none; background:none;
+    padding:14px 6px; font-size:var(--fsMenu); border-bottom:1px solid #eee; }
+  .menuItem .sub { display:block; font-size:calc(var(--fsMenu) - 4px); color:#888; margin-top:2px; }
+  .formRow { display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:var(--fsForm); }
+  .formRow label { width:calc(var(--fsForm) * 7.8); color:#444; flex:none; }
+  .formRow input, .formRow select { flex:1; padding:9px 8px; font-size:var(--fsForm); border:1px solid #bbb; border-radius:6px; min-width:0; }
+  .listRow { display:flex; align-items:center; gap:6px; padding:7px 0; border-bottom:1px solid #eee; font-size:calc(var(--fsForm) - 1px); }
+  .listRow input, .listRow select { padding:7px 6px; font-size:calc(var(--fsForm) - 1px); border:1px solid #ccc; border-radius:5px; min-width:0; }
+  .listRow .coords { color:#777; font-size:calc(var(--fsForm) - 3px); white-space:nowrap; }
+  .listRow .del { border:none; background:#fbeaea; color:#c33; border-radius:5px; padding:8px 11px; font-size:var(--fsForm); }
+  .saveBtn { width:100%; background:#1e73d2; color:#fff; border:none; border-radius:8px; padding:14px 12px; font-size:var(--fsMenu); margin-top:6px; }
+  #toast { position:fixed; top:52px; left:50%; transform:translateX(-50%); background:rgba(30,58,95,.92);
+    color:#fff; padding:10px 18px; border-radius:20px; font-size:var(--fsForm); z-index:200; display:none; max-width:90%; }
+  .help p { font-size:calc(var(--fsForm) - 1px); line-height:1.75; margin-bottom:8px; }
+  .help h3 { font-size:var(--fsForm); margin:12px 0 4px; color:#1e3a5f; }
+  #jobBar { position:fixed; left:12px; right:12px; bottom:calc(env(safe-area-inset-bottom,0px) + 96px);
+    background:#1e3a5f; color:#fff; border-radius:10px; padding:10px 12px; display:none;
+    z-index:60; box-shadow:0 4px 16px rgba(0,0,0,.28); align-items:center; gap:10px; }
+  #jobBar.show { display:flex; }
+  #jobBar .jobText { flex:1; font-size:calc(var(--fsForm) - 1px); line-height:1.45; }
+  #jobBar .jobTrack { position:absolute; left:12px; right:12px; bottom:6px; height:3px;
+    background:rgba(255,255,255,.25); border-radius:2px; overflow:hidden; }
+  #jobBar .jobFill { height:100%; width:0; background:#7fc4ff; transition:width .15s linear; }
+  #jobBar .jobStop { background:#fff; color:#1e3a5f; border:0; border-radius:6px;
+    padding:9px 14px; font-size:var(--fsForm); font-weight:bold; }
+  .help table { width:100%; border-collapse:collapse; font-size:calc(var(--fsForm) - 2px); margin:4px 0 10px; }
+  .help th, .help td { border:1px solid #ccd6e0; padding:3px 5px; text-align:left; }
+  .help th { background:#eef2f7; color:#1e3a5f; white-space:nowrap; }
+  .help ul { margin:0 0 8px 18px; padding:0; }
+  .help li { font-size:calc(var(--fsForm) - 1px); line-height:1.75; margin-bottom:3px; }
+  #fileTiff, #fileJson, #fileImport, #fileMerge { display:none; }
+  .badge { background:#1e73d2; color:#fff; border-radius:10px; font-size:11.5px; padding:2px 8px; margin-left:6px; }
+  .badge.warn { background:#c9741a; }
+  #alertBar { display:none; background:#b3261e; color:#fff; font-size:13px; padding:8px 10px; line-height:1.45; z-index:11; }
+  #alertBar button { margin-left:8px; border:none; border-radius:5px; background:rgba(255,255,255,.25); color:#fff; padding:5px 11px; font-size:13px; }
+  /* 直前に登録した点のGPS精度。ヘッダーのすぐ下・右寄せ（地図と大ボタンの邪魔をしない位置） */
+  #fixBar { position:absolute; top:6px; right:10px; max-width:calc(100% - 20px);
+    background:rgba(30,58,95,.93); color:#fff;
+    padding:7px 12px; border-radius:14px; font-size:var(--fsForm); z-index:6;
+    display:none; text-align:right; line-height:1.45; box-shadow:0 2px 8px rgba(0,0,0,.25); }
+  #fixBar .sub { display:block; font-size:calc(var(--fsForm) - 3px); opacity:.8; }
+  .dup { color:#b3261e; font-weight:bold; }
+  .segRow { display:flex; gap:8px; margin-bottom:12px; }
+  .seg { flex:1; border:1px solid #bbb; background:#fff; color:#444; border-radius:8px; padding:12px 6px; font-size:var(--fsForm); }
+  .seg.on { background:#1e73d2; border-color:#1e73d2; color:#fff; font-weight:bold; }
+  #dailyTable { border-collapse:collapse; font-size:13px; width:100%; }
+  #dailyTable th, #dailyTable td { border:1px solid #ddd; padding:4px 5px; text-align:center; white-space:nowrap; }
+  #dailyTable th { background:#eaf2fc; color:#1e3a5f; font-weight:bold; position:sticky; top:0; }
+  #dailyTable td.num { text-align:right; }
+  #dailyTable tr.total td { background:#f5f7fa; font-weight:bold; }
+  #dailyTable input { width:56px; padding:5px 3px; font-size:13px; border:1px solid #ccc; border-radius:4px; text-align:right; }
+  #dailyTable input.biko { width:90px; text-align:left; }
+  .mkico { display:inline-block; vertical-align:middle; flex:none;
+    background-image:var(--mkimg); background-repeat:no-repeat; image-rendering:auto; }
+  .swatch { width:14px; height:14px; border-radius:3px; flex:none; border:1px solid rgba(0,0,0,.25); }
+  .noteBox { background:#fff8e6; border:1px solid #e6d3a3; border-radius:6px; padding:8px 10px; font-size:13px; color:#6b5320; margin-bottom:10px; line-height:1.65; }
+  /* ===== 境界復元で足したもの ===== */
+  /* ヘッダーは横幅の狭い端末でも折り返さない。GPSの表示だけを縮める */
+  header { flex-wrap:nowrap; gap:6px; }
+  header .title { white-space:nowrap; flex:none; font-size:14px; }
+  #progChip { font-size:11.5px; background:rgba(255,255,255,.2); padding:2px 8px; border-radius:9px;
+    white-space:nowrap; flex:none; font-variant-numeric:tabular-nums; }
+  #gpsInfo { margin-left:auto; flex:0 1 auto; min-width:0; max-width:52%; overflow:hidden;
+    font-size:11.5px; line-height:1.35; }
+  /* 画面右上の案内。トースト（上から52px）と重ならないよう幅を抑える */
+  #fixBar { max-width:62%; font-size:calc(var(--fsForm) - 2px); }
+  /* 記録画面は一覧の上に出す（一覧の［記録］から開くため） */
+  #recPanel { z-index:110; }
+  .recBtn { flex:1; border:none; border-radius:10px; padding:16px 8px; font-size:calc(var(--fsMenu) + 1px);
+    font-weight:bold; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.2); }
+  .recBtn.da { background:#d9261c; }
+  .recBtn.ki { background:#1e73d2; }
+  .recBtn.sel { outline:4px solid #ffd400; outline-offset:-4px; }
+  .stChip { display:inline-block; border-radius:9px; font-size:11.5px; padding:2px 8px; color:#fff; }
+  .stChip.da { background:#d9261c; } .stChip.ki { background:#1e73d2; } .stChip.no { background:#8a8f96; }
+
+  /* ===== 指で確実に操作できるタッチUI ===== */
+  :root { --touchTarget:48px; --touchGap:8px; }
+  button, select, input { touch-action:manipulation; }
+  button { cursor:pointer; }
+  button:focus-visible, select:focus-visible, input:focus-visible {
+    outline:3px solid #ffd400; outline-offset:2px;
+  }
+  button:disabled { cursor:default; }
+
+  /* 地図上の常設操作 */
+  #followBtn { width:52px; height:52px; right:12px; bottom:12px; font-size:25px; }
+  #zoomBox { right:12px; bottom:72px; border-radius:10px; }
+  #zoomBox button { width:52px; height:48px; font-size:25px; }
+  #zoomLevel { right:12px; bottom:174px; }
+  #actionbar { gap:var(--touchGap); padding:10px 74px 10px 10px; }
+  .bigbtn { min-height:52px; padding:13px 18px; }
+  .bigbtn.sm { min-height:48px; padding:12px 16px; }
+  .sidebtn { min-width:52px; min-height:52px; padding:7px 8px; }
+  #stakeBar { min-height:52px; padding:7px 14px; }
+  #stakeBar select { min-height:44px; padding:8px; }
+  #memoTools { min-height:52px; gap:9px; padding:7px 12px; }
+  .colorBtn { width:42px; height:42px; }
+
+  /* 下部リボン。各コマンドとタブを指1本分以上にする */
+  #ribbonCmd { padding:8px 8px 4px; scroll-padding-inline:8px; }
+  .rgroup { padding-inline:7px; }
+  .rgroup .rrow { gap:6px; }
+  .rbtn { min-height:64px; min-width:max(var(--rbW),58px); padding:7px 8px 6px; }
+  .rsel { min-height:64px; padding:6px; }
+  .rsel select, .rsel input.rnum { min-height:44px; padding:8px 6px; }
+  .rsel .rnow { min-height:44px; display:flex; align-items:center; justify-content:center; }
+  #ribbonTabs button { min-height:52px; padding:8px 2px calc(9px + env(safe-area-inset-bottom, 0px)); }
+
+  /* シート・一覧・フォーム */
+  .panel .sheet { max-height:92%; padding:16px max(16px,env(safe-area-inset-right,0px))
+    calc(18px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
+    overscroll-behavior:contain; }
+  .sheet h2 { min-height:48px; margin-bottom:12px; }
+  .sheet h2 .close { width:48px; height:48px; font-size:20px; flex:none; }
+  .menuItem { min-height:56px; padding:15px 8px; }
+  .formRow { gap:10px; margin-bottom:14px; }
+  .formRow input, .formRow select { min-height:48px; padding:11px 10px; }
+  .listRow { min-height:58px; gap:8px; padding:8px 0; }
+  .listRow input, .listRow select { min-height:46px; padding:9px 8px; }
+  .listRow .del, .del { min-height:48px; min-width:48px; padding:10px 12px; }
+  .saveBtn { min-height:52px; padding:14px 13px; }
+  .seg { min-height:52px; padding:13px 8px; }
+  #alertBar { padding:9px 10px; }
+  #alertBar button { min-height:44px; margin:4px 0 4px 8px; padding:8px 12px; }
+  #jobBar .jobStop { min-height:48px; padding:10px 15px; }
+  .recBtn { min-height:72px; padding:17px 10px; }
+
+  @media (max-width:480px) {
+    header { min-height:44px; padding:6px 8px; gap:5px; }
+    header .title { font-size:13px; }
+    #progChip { padding:4px 7px; }
+    #gpsInfo { max-width:46%; }
+    .panel .sheet { max-height:94%; }
+    .formRow { align-items:stretch; flex-wrap:wrap; }
+    .formRow label { width:100%; }
+    .formRow input, .formRow select { flex-basis:calc(100% - 70px); }
+    .listRow { flex-wrap:wrap; }
+    #actionbar .rowwrap { gap:8px; }
+  }
+  @media (max-height:520px) and (orientation:landscape) {
+    .panel .sheet { max-height:98%; border-radius:12px 12px 0 0; }
+    #ribbonTabs button { min-height:48px; }
+    .rbtn, .rsel { min-height:58px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="title" id="appTitle">境界復元 <small style="font-weight:normal;opacity:.7">地図版</small></span>
+    <span id="modeLabel" style="display:none;"></span>
+    <span id="progChip" title="復元の進み具合">—</span>
+    <span id="dateBadge" style="display:none;font-size:11.5px;background:#c9741a;padding:2px 7px;border-radius:9px;"></span>
+    <span id="offlineBadge" style="display:none;font-size:11.5px;background:#555;padding:2px 7px;border-radius:9px;">オフライン</span>
+    <div id="gpsInfo">GPS: 待機中</div>
+  </header>
+  <div id="alertBar"></div>
+  <div id="mapWrap">
+    <canvas id="map"></canvas>
+    <div id="fixBar"></div>
+    <div id="zoomLevel">－</div>
+    <div id="zoomBox">
+      <button type="button" onclick="zoomBy(2)" title="拡大">＋</button>
+      <button type="button" onclick="zoomBy(0.5)" title="縮小">－</button>
+    </div>
+    <button type="button" id="followBtn" title="現在地追従">◎</button>
+    <div id="actionbar"></div>
+  </div>
+  <div id="ribbon">
+    <div id="ribbonWrap">
+      <div id="ribbonCmd" role="toolbar" aria-label="コマンド"></div>
+      <div class="redge" id="redgeL">‹</div>
+      <div class="redge" id="redgeR">›</div>
+    </div>
+    <div id="ribbonTabs" role="tablist" aria-label="作業の切り替え"></div>
+  </div>
+</div>
+
+<!-- 点をタップしたときの記録画面 -->
+<div class="panel" id="recPanel"><div class="sheet">
+  <h2><span id="recTitle">点</span><button type="button" class="close" onclick="closePanel('recPanel')">✕</button></h2>
+  <div id="recBody"></div>
+</div></div>
+
+<!-- 各種設定 -->
+<div class="panel" id="settingsPanel"><div class="sheet">
+  <h2>各種設定<button type="button" class="close" onclick="closePanel('settingsPanel')">✕</button></h2>
+  <div class="formRow"><label>文字・アイコンサイズ</label><select id="setFontScale">
+    <option value="m">標準</option>
+    <option value="l">大</option>
+    <option value="xl">特大</option>
+  </select></div>
+  <p style="font-size:12.5px;color:#888;margin-bottom:8px;">リボンのボタン・タブ・画面の文字と絵記号をまとめて大きくします。手袋や直射日光で見づらいときは「大」または「特大」にしてください。<b>選ぶとすぐに切り替わります。</b></p>
+  <div class="formRow"><label>作業者名</label><input id="setWorker" placeholder="例: 森"></div>
+  <p style="font-size:12.5px;color:#888;margin-bottom:8px;">打設・既設を記録するときに、その点へ記録されます。</p>
+  <div class="formRow"><label>座標系（系番号）</label><select id="setZone"></select></div>
+  <p style="font-size:12.5px;color:#888;margin-bottom:8px;">取り込むSIMA・CSVの座標系です。図面（GeoTIFF）にEPSGコードが含まれる場合はそちらが優先されます。</p>
+  <h3 style="font-size:15px;margin:14px 0 6px;">点と距離の出しかた（多いときの間引き）</h3>
+  <div class="formRow"><label>点を出す上限</label>
+    <input id="setThinPt" type="number" min="20" max="5000" step="10"><span style="color:#888;font-size:13px;">点</span></div>
+  <div class="formRow"><label>点名を出す上限</label>
+    <input id="setThinName" type="number" min="10" max="5000" step="10"><span style="color:#888;font-size:13px;">点</span></div>
+  <div class="formRow"><label>距離を出す長さ</label>
+    <input id="setThinDist" type="number" min="10" max="400" step="5"><span style="color:#888;font-size:13px;">px</span></div>
+  <p style="font-size:12.5px;color:#888;margin-bottom:8px;">画面に入っている点が「点を出す上限」を超えているときは<b>線と色の粒だけ</b>にします。「距離を出す長さ」は、画面の上でその長さ以上に見えている辺にだけ距離を出す、という意味です。</p>
+  <button type="button" class="saveBtn" onclick="saveSettings()">保存</button>
+</div></div>
+
+<!-- 杭種の設定 -->
+<div class="panel" id="stakePanel"><div class="sheet">
+  <h2>杭種の設定<button type="button" class="close" onclick="closePanel('stakePanel')">✕</button></h2>
+  <p style="font-size:13px;color:#666;margin-bottom:8px;">打設・既設を記録するときに選ぶ一覧です。現場で使うものだけに絞ると押しやすくなります。</p>
+  <div id="stakeEdit"></div>
+  <div style="display:flex;gap:8px;margin-top:8px;">
+    <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;" onclick="addStake()">＋ 杭種を追加</button>
+    <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;" onclick="resetStakes()">初期値に戻す</button>
+  </div>
+</div></div>
+
+<!-- デバッグ: 日付変更 -->
+<div class="panel" id="mockDatePanel"><div class="sheet">
+  <h2>デバッグ: 日付を変更<button type="button" class="close" onclick="closePanel('mockDatePanel')">✕</button></h2>
+  <p style="font-size:13px;color:#666;margin-bottom:10px;">ここで日付を指定すると、以降に記録する打設・既設の日付がその日付になります。</p>
+  <div class="formRow"><label>記録日として扱う日付</label><input type="date" id="mockDateInput"></div>
+  <div style="display:flex;gap:8px;">
+    <button type="button" class="saveBtn" style="margin:0;" onclick="applyMockDate()">この日付にする</button>
+    <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;" onclick="clearMockDate()">実際の日付に戻す</button>
+  </div>
+  <p style="font-size:12.5px;color:#888;margin-top:10px;" id="mockDateNow"></p>
+</div></div>
+
+<!-- 自動バックアップ -->
+<div class="panel" id="snapPanel"><div class="sheet">
+  <h2>自動バックアップから復元<button type="button" class="close" onclick="closePanel('snapPanel')">✕</button></h2>
+  <p class="noteBox">記録を変更するたび、端末内に自動で控えを残しています（最新10世代＋日付ごとの初回）。誤って消した場合などに、この一覧から戻せます。復元すると現在のデータは置き換わります（復元直前の状態も控えに追加されます）。</p>
+  <div id="snapList"></div>
+</div></div>
+
+<!-- レイヤ -->
+<div class="panel" id="layerPanel"><div class="sheet">
+  <h2>レイヤ表示<button type="button" class="close" onclick="closePanel('layerPanel')">✕</button></h2>
+  <div class="noteBox" id="layerNow" style="margin-bottom:8px;"></div>
+  <div style="display:flex;gap:8px;margin-bottom:10px;">
+    <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;" onclick="showAllLayers()">すべて表示</button>
+  </div>
+  <div id="otherLayers"></div>
+  <h3 style="font-size:14.5px;margin:12px 0 6px;color:#1e3a5f;">状態でしぼる</h3>
+  <div id="stateLayers"></div>
+  <h3 style="font-size:14.5px;margin:12px 0 6px;color:#1e3a5f;">取り込んだファイル</h3>
+  <div id="importLayers"></div>
+  <p style="font-size:12.5px;color:#888;margin-top:10px;">非表示の点はタップでも選べません。<b>画面に入っている点が多いときは、点は自動で粒だけになります</b>（［各種設定］で変えられます）。</p>
+</div></div>
+
+<!-- 画面の表示設定 -->
+<div class="panel" id="dispPanel"><div class="sheet">
+  <h2><span id="dispTitle">表示設定</span><button type="button" class="close" onclick="closePanel('dispPanel')">✕</button></h2>
+  <p style="font-size:12.5px;color:#888;margin-bottom:8px;"><b>画面の見た目だけ</b>を変えます。記録の中身は変わりません。</p>
+  <div id="dispRows"></div>
+  <div style="display:flex;gap:8px;margin-top:8px;">
+    <button type="button" class="saveBtn" style="margin:0;" onclick="closePanel('dispPanel')">閉じる</button>
+    <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;" onclick="resetDisp()">初期値に戻す</button>
+  </div>
+</div></div>
+
+<!-- 図面（GeoTIFF）の管理 -->
+<div class="panel" id="tiffPanel"><div class="sheet">
+  <h2>図面の管理<button type="button" class="close" onclick="closePanel('tiffPanel')">✕</button></h2>
+  <div class="noteBox" style="margin-bottom:8px;"><b>図面は保存されません。</b>アプリを閉じると消えるので、次に開いたときは読み直してください（点・線・記録は保存されます）。<b>同時に3枚まで</b>重ねられます。</div>
+  <div id="tiffRows"></div>
+  <div style="display:flex;gap:8px;margin-top:8px;">
+    <button type="button" class="saveBtn" style="margin:0;" onclick="document.getElementById('fileTiff').click()">＋ 図面を追加</button>
+    <button type="button" class="saveBtn" style="margin:0;background:#fbeaea;color:#c33;" onclick="clearTiffs()">全部削除</button>
+  </div>
+</div></div>
+
+<!-- 取込 -->
+<div class="panel" id="importPanel"><div class="sheet">
+  <h2>取込の確認<button type="button" class="close" onclick="closePanel('importPanel')">✕</button></h2>
+  <div id="importPreview"></div>
+  <div class="segRow" id="impKindSeg">
+    <button type="button" class="seg" data-kind="bp"  onclick="setImportKind('bp')">境界点（復元する点）</button>
+    <button type="button" class="seg" data-kind="ref" onclick="setImportKind('ref')">基準点（参考）</button>
+  </div>
+  <p style="font-size:12.5px;color:#888;margin-bottom:8px;" id="impKindNote"></p>
+  <div class="formRow"><label>ファイルの呼び名</label><input id="impName" placeholder="例: 野田第４"></div>
+  <div style="display:flex;gap:8px;">
+    <button type="button" class="saveBtn" style="margin:0;" onclick="commitImport()">この内容で取り込む</button>
+    <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;" onclick="closePanel('importPanel')">やめる</button>
+  </div>
+</div></div>
+
+<!-- 一覧 -->
+<div class="panel" id="listPanel"><div class="sheet">
+  <h2><span id="listTitle">一覧</span><button type="button" class="close" onclick="closePanel('listPanel')">✕</button></h2>
+  <div id="secPt">
+  <h3 style="font-size:15.5px;margin:4px 0;">境界点 <span class="badge" id="ptCount"></span></h3>
+  <div class="noteBox" id="progInfo" style="background:#eef2f7;border-color:#d7e0ea;color:#1e3a5f;"></div>
+  <div class="formRow" style="margin-bottom:8px;">
+    <input id="ptSearch" type="search" placeholder="点名・杭種・画地・記録者で検索" oninput="setPtSearch(this.value)" style="flex:2;">
+    <button type="button" class="del" style="min-width:52px;" onclick="setPtSearch('')">消去</button>
+  </div>
+  <div class="formRow" style="margin-bottom:6px;">
+    <label style="width:auto;min-width:52px;">並べ替え</label>
+    <select id="ptSort" onchange="setPtSort(this.value)">
+      <option value="name">点名順（昇順）</option>
+      <option value="nameDesc">点名順（降順）</option>
+      <option value="src">取込の並び順</option>
+      <option value="recNew">記録が新しい順</option>
+    </select>
+  </div>
+  <div class="formRow" style="margin-bottom:6px;">
+    <label style="width:auto;min-width:52px;">まとめ方</label>
+    <select id="ptGroup" onchange="setPtGroup(this.value)">
+      <option value="st">状態ごと</option>
+      <option value="plot">画地ごと</option>
+      <option value="stake">杭種ごと</option>
+      <option value="date">記録日ごと</option>
+      <option value="imp">取込ファイルごと</option>
+      <option value="none">まとめない</option>
+    </select>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:6px;">
+    <button type="button" class="del" style="flex:1;" onclick="ptOpenAll()">全部開く</button>
+    <button type="button" class="del" style="flex:1;" onclick="ptCloseAll()">全部たたむ</button>
+  </div>
+  <p id="ptListInfo" style="font-size:12.5px;color:#666c74;margin:2px 0 6px;"></p>
+  <div id="pointList"></div>
+  <div id="ptMoreBox" style="display:none;margin-top:6px;">
+    <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;" onclick="ptShowMore()">さらに表示</button>
+  </div>
+  </div>
+  <div id="secRt">
+  <h3 style="font-size:15.5px;margin:14px 0 4px;">計測線 <span class="badge" id="rtCount"></span></h3>
+  <div id="routeList"></div>
+  </div>
+  <div id="secOther">
+  <h3 style="font-size:15.5px;margin:14px 0 4px;">画地の線 <span class="badge" id="lnCount"></span></h3>
+  <div id="lineList"></div>
+  <h3 style="font-size:15.5px;margin:14px 0 4px;">基準点 <span class="badge" id="refCount"></span></h3>
+  <div id="importList"></div>
+  <h3 style="font-size:15.5px;margin:14px 0 4px;">手書きメモ</h3>
+  <div class="listRow"><span id="strokeCount" style="flex:1"></span><button type="button" class="del" onclick="clearStrokes()">全消去</button></div>
+  </div>
+</div></div>
+
+<!-- 使い方 -->
+<div class="panel" id="helpPanel"><div class="sheet help">
+  <h2>使い方<button type="button" class="close" onclick="closePanel('helpPanel')">✕</button></h2>
+  <p id="helpVersion" style="font-size:13px;color:#666c74;background:#eef2f7;border-radius:6px;padding:6px 8px;"></p>
+  <h3>このアプリですること</h3>
+  <p>復元する境界点を<b>SIMAやCSVで取り込み</b>、現地で<b>打設したか・既設だったか</b>を点ごとに記録します。復元そのものは器械で行い、このアプリは<b>記録と確認</b>のためのものです。</p>
+  <table>
+    <tr><th>打設</th><td>現地に杭が<b>無く</b>、復元して<b>新しく打った</b>点。地図では<b>赤</b></td></tr>
+    <tr><th>既設</th><td>現地に杭が<b>あった</b>点。地図では<b>青</b></td></tr>
+    <tr><th>未</th><td>まだ現地を見ていない点。地図では<b>灰色</b></td></tr>
+  </table>
+  <h3>取り込む</h3>
+  <p>「準備」タブの<b>［境界点取込］</b>でSIMA（.sim）またはCSVを読み込みます。SIMAに<b>画地データ</b>（D00〜D99）が入っていれば、その<b>線もいっしょに取り込みます</b>。</p>
+  <ul>
+    <li>画地の線は<b>塗りつぶさず線だけ</b>で描きます（同じ点を何度も通る一筆書きのため、塗ると正しく出ません）。</li>
+    <li>SIMAの<b>C03に入っている辺長</b>をそのまま距離として出します。座標から計算し直さないので、元データと必ず一致します。</li>
+    <li><b>［基準点取込］</b>は参考用です。<b>蛍光緑</b>で表示され、打設・既設の記録はできません（復元の対象ではないため）。</li>
+  </ul>
+  <h3>記録する</h3>
+  <p>「復元」タブにして、<b>地図の点をタップ</b>します。<b>［打設］／［既設］</b>と<b>杭種</b>を選んで［記録］を押すと、その日の日付と作業者名がいっしょに残ります。</p>
+  <ul>
+    <li>杭種は<b>前回選んだものが残ります</b>。同じ杭が続くときは押すだけで済みます。</li>
+    <li>記録済みの点をタップすると、いまの内容が出て<b>直したり取り消したり</b>できます。</li>
+    <li>大ボタンの左右の<b>［取消］［やり直し］</b>で、記録の操作を50回まで戻せます。</li>
+    <li>ヘッダーに<b>「打設○／既設○／未○」</b>が常に出ます。</li>
+  </ul>
+  <h3>距離を見る</h3>
+  <p><b>距離は独立したレイヤ</b>です。「確認」タブの［レイヤ］→<b>「距離」</b>で表示／非表示を切り替えられます。</p>
+  <ul>
+    <li>出るのは<b>結ばれている線の距離</b>です。画地の辺と、自分で引いた計測線の両方に出ます。</li>
+    <li><b>拡大したぶんだけ出ます。</b>画面の上で一定の長さ（初期値40px）以上に見えている辺にだけ出すので、全体表示では出ません。<b>［各種設定］</b>で変えられます。</li>
+    <li>文字は線に沿って傾き、上下がひっくり返らないようにしています。</li>
+  </ul>
+  <h3>2点を選んで距離をはかる</h3>
+  <p>「計測」タブで<b>点を順にタップ</b>し、大ボタンの<b>［○点で確定］</b>を押すと計測線ができます。<b>2点でも3点以上でも</b>引けます。線の上に区間ごとの距離が出ます。</p>
+  <p>選んでいる途中も、<b>いま何mか</b>が大ボタンに出ます。計測線は［線の一覧］から1本ずつ、または［計測線全削除］でまとめて消せます。</p>
+  <h3>点が多いときの見え方</h3>
+  <p>数千点を一度に描くと重くなり、文字も潰れて読めません。そこで<b>画面に入っている点数で自動的に切り替えます</b>。</p>
+  <table>
+    <tr><th>画面内の点数</th><th>出るもの</th></tr>
+    <tr><td>上限より多い（初期値 300点超）</td><td>線と<b>色の粒</b>だけ。どこまで打ったかは色の広がりで分かります</td></tr>
+    <tr><td>上限以下</td><td>線＋点（打設＝赤／既設＝青／未＝灰）</td></tr>
+    <tr><td>点名の上限以下（初期値 150点）</td><td>さらに点名</td></tr>
+  </table>
+  <p>3つの数字は「準備」タブの<b>［各種設定］</b>で変えられます。</p>
+  <h3>背景地図と航空写真</h3>
+  <p>「準備」タブの<b>［背景地図］</b>で切り替えます。標準地図・淡色地図のほか、<b>年代別の航空写真</b>が選べます。</p>
+  <ul>
+    <li>最新（シームレス）／2007年〜／1987-1990／1984-1986／1979-1983／1974-1978／1961-1969／1945-1950（米軍撮影）</li>
+    <li><b>年代ごとに、出せる細かさの範囲が決まっています。</b>細かくしすぎると「これ以上は細かくなりません」、粗くしすぎると「もっと拡大すると出ます」と画面右上に出ます（2007年〜は拡大しないと出ません）。</li>
+    <li>圃場整備の前後を見比べたいときは、1961-1969 や 1974-1978 が手がかりになります。</li>
+    <li>古い年代は<b>撮影されていない地域</b>もあります。何も出ないときは別の年代を試してください。</li>
+  </ul>
+  <p><b>出典の表示について。</b>画面の右下に出典が出ます。地理院タイルは出典を示せば自由に利用できます。</p>
+  <h3>圏外での利用</h3>
+  <p><b>一度表示した地図は端末内に控えます。</b>現場に入る前に、レイヤ画面の「背景地図」の下にある<b>［この範囲を圏外用に控える］</b>を押してください。いま見えている範囲を、前後の拡大率ぶんまとめて取り込みます。</p>
+  <p>控えの上限は約250MB（6,000枚）で、超えると古いものから自動で消えます。使用量は「確認」タブの［保存状態］で見られます。</p>
+  <h3>座標系（系番号）</h3>
+  <p>取り込むSIMA・CSVの系番号を「準備」タブの<b>［各種設定］</b>で合わせてください（初期値は第1系）。現在地がその系から大きく外れているときは、画面上部で知らせて候補を出します。</p>
+  <h3>データの保持</h3>
+  <p>点・線・記録・設定は端末内（IndexedDB）に自動保存されます（図面は毎回読込が必要）。変更のたびに端末内へ自動バックアップが残り、「確認」タブの<b>［自動控え］</b>でいつでも戻せます。</p>
+  <p>端末の故障・初期化に備えて、作業終了時には「データ」タブの<b>［保存］</b>でJSONを端末外へ出しておいてください。複数人で分担したときは<b>［控えを読む］</b>で合流できます（今あるものは消えません）。</p>
+  <h3>配置について</h3>
+  <p>GPSはブラウザの仕様上、HTTPSで開いた場合のみ動作します。<b>本ファイル（index.html）と sw.js の2つを同じフォルダに置いてください。</b></p>
+  <p>更新したときは、電波のある場所で<b>2回開く</b>と新しい版に切り替わります（1回目は旧版を出しつつ裏で取得、2回目で切替）。ヘッダーの版数で確認できます。</p>
+  <h3>PCでの動作確認</h3>
+  <p>「確認」タブの<b>［擬似GPS］</b>で、地図をタップした位置を現在地として扱えます。<b>［擬似日付］</b>では記録される日付を変えられます。</p>
+</div></div>
+
+<input type="file" id="fileTiff">
+<input type="file" id="fileJson">
+<input type="file" id="fileImport">
+<input type="file" id="fileMerge">
+<div id="toast"></div>
+<div id="jobBar" role="status" aria-live="polite">
+  <div class="jobText" id="jobText"></div>
+  <div class="jobTrack"><div class="jobFill" id="jobFill"></div></div>
+  <button type="button" class="jobStop" id="jobStop" onclick="cancelJob()">中止</button>
+</div>
+
+<script>
+'use strict';
+/* ================= 状態 ================= */
+/* 版の表示はここ1か所から。ヘッダー・使い方・保存状態・PWA名すべてこれを使う */
+const APP_NAME    = '境界復元';
+const APP_EDITION = '地図版';
+const APP_VERSION = 'v0.2';
+const APP_BUILD   = '@@BUILD@@';          // ビルド時に日付と版ハッシュが入る
+function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
+function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
+
+const DEFAULT_SETTINGS = {
+  zone:1, mockGps:false, colorMode:'auto', mockDate:null, worker:'',
+  stake:'コンクリート杭', stakes:null, stakesVer:1,
+  baseMap:'std', lastView:null, tiffAlpha:1, fontScale:'m',
+  lastExport:null, setVer:1,
+  thinPt:300,      // 画面内の点がこれを超えたら「線と粒」だけにする
+  thinName:150,    // 画面内の点がこれ以下なら点名も出す
+  thinDist:40      // 画面上でこのpx以上に見えている辺にだけ距離を出す
+};
+const store = {
+  imports:  [],   // 取り込んだファイル {id, name, src:'sima'|'csv', kind:'bp'|'ref', ts}
+  points:   [],   // 境界点（復元の対象） {id, impId, no, name, x(東), y(北), z, idx, rec?}
+  refPoints:[],   // 基準点（参考・記録の対象外） {id, impId, no, name, x, y, z}
+  lines:    [],   // 画地の線 {id, impId, no, name, ptIds:[], dists:[], closed}
+  routes:   [],   // 計測線（自分で引いた線） {id, ptIds:[], date, ts}
+  strokes:  [],   // 手書きメモ {color, w(map単位), pts:[[x,y],...]}
+  settings: Object.assign({}, DEFAULT_SETTINGS),
+  disp: {},
+  layers: { pt:true, ref:true, line:true, route:true, dist:true, memo:true,
+            base:true, map:true, hiddenImports:[],
+            stNone:true, stDa:true, stKi:true }
+};
+const state = {
+  mode:'view', follow:true,
+  view:{ cx:0, cy:0, scale:1 },   // 地図座標(東=x,北=y), scale=px/地図単位
+  tiff:null, tiffInfo:'', detail:null,
+  epsg:null, geographic:false,
+  gps:{ ok:false, lat:0, lon:0, acc:0, x:0, y:0 },
+  tiffs: [],
+  currentRoute:[],                // 計測中に選んでいる点
+  memoColor:'#d9261c', eraser:false,
+  fixing:null,                    // 使わない（共通部品との互換のため残す）
+  saveError:false,
+  drawInfo:{ n:0, mode:'dot' }    // 直前の描画で点をどう出したか（画面の案内に使う）
+};
+const LS_KEY = 'fukugenAppData_v1';
+/* 指先はマウスポインタより接触面が広く、わずかにずれやすい。
+   タッチ端末では選点の当たり判定だけを広げ、密集点では最も近い点を選ぶ。 */
+const TOUCH_HIT_RADIUS = (navigator.maxTouchPoints>0 ||
+  (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) ? 44 : 32;
+
+/* ================= 杭種 =================
+   打設・既設を記録するときに選ぶ。点名は作らないので略字は持たない。 */
+const DEFAULT_STAKES = ['コンクリート杭','プラスチック杭','金属鋲','金属標','木杭','石杭','不明'];
+function stakeList(){
+  const s = store.settings.stakes;
+  if(!Array.isArray(s) || !s.length) store.settings.stakes = DEFAULT_STAKES.slice();
+  return store.settings.stakes;
+}
+function currentStake(){
+  const l = stakeList();
+  return l.includes(store.settings.stake) ? store.settings.stake : l[0];
+}
+function setStake(name){
+  store.settings.stake = name;
+  save(); updateActionbar();
+  toast(`杭種: ${name}`);
+}
+
+/* ================= 日付 ================= */
+function realTodayStr(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function todayStr(){
+  const m=store.settings.mockDate;
+  return (m && /^\d{4}-\d{2}-\d{2}$/.test(m)) ? m : realTodayStr();
+}
+function dateLabel(ds){
+  if(!ds) return '日付なし';
+  const [y,m,d]=ds.split('-');
+  return `${+m}/${+d}`+(ds===todayStr()?'（本日）':'');
+}
+
+/* ================= 画面の表示設定 ================= */
+const DEFAULT_DISP = {
+  stDaColor:'#d9261c',    // 打設
+  stKiColor:'#1e73d2',    // 既設
+  stNoColor:'#8a8f96',    // 未
+  ptMarkSize:'m', ptNameSize:'m',
+  lineColor:'#5a3ea8', lineWidth:2,          // 画地の線
+  routeColor:'#e07800', routeWidth:3,        // 計測線
+  distColor:'#1b3a1b', distSize:'m',         // 距離の文字
+  refColor:'#39FF14', refMarkSize:'m', refNameSize:'m'
+};
+const SIZE_STEPS = { s:0.75, m:1, l:1.3, xl:1.6 };
+const SIZE_NAMES = { s:'小', m:'中', l:'大', xl:'特大' };
+function disp(k){
+  const v = store.disp ? store.disp[k] : undefined;
+  return (v===undefined || v===null || v==='') ? DEFAULT_DISP[k] : v;
+}
+function sizeMul(k){ return SIZE_STEPS[disp(k)] || 1; }
+function labelFont(k){ return Math.round(12 * sizeMul(k)); }
+
+/* ================= 復元の記録（打設 / 既設） =================
+   打設 … 現地に杭が無く、復元して新しく打った点
+   既設 … 現地に杭があった点
+   未   … まだ現地を見ていない点
+   点ごとに p.rec = {k:'da'|'ki', d:記録日, w:記録者, s:杭種, t:記録時刻} を持つ。
+   記録は画面の中だけの情報で、取り込んだ座標には手を触れない。 */
+const REC_UNDO_MAX = 50;
+const recUndo = [], recRedo = [];
+const ST_NAME = { da:'打設', ki:'既設', no:'未' };
+function stOf(p){ const r=p&&p.rec; return (r&&(r.k==='da'||r.k==='ki')) ? r.k : 'no'; }
+function stColor(k){ return k==='da'?disp('stDaColor') : k==='ki'?disp('stKiColor') : disp('stNoColor'); }
+function recDate(p){ return (p&&p.rec&&p.rec.d)||''; }
+function recWorker(p){ return (p&&p.rec&&p.rec.w)||''; }
+function recStake(p){ return (p&&p.rec&&p.rec.s)||''; }
+function progCounts(){
+  let da=0, ki=0, no=0;
+  for(const p of store.points){ const k=stOf(p); if(k==='da') da++; else if(k==='ki') ki++; else no++; }
+  return { da, ki, no, done:da+ki, all:store.points.length };
+}
+/* 記録を書き換える（取消・やり直しの1手として積む） */
+function applyRec(p, rec, quiet){
+  if(!p) return false;
+  const before = p.rec ? Object.assign({}, p.rec) : null;
+  if(rec) p.rec = rec; else delete p.rec;
+  recUndo.push({ id:p.id, before, after: rec ? Object.assign({}, rec) : null });
+  if(recUndo.length>REC_UNDO_MAX) recUndo.shift();
+  recRedo.length = 0;
+  save(); draw(); updateActionbar(); updateProg(); refreshEdits();
+  return true;
+}
+function setRec(id, kind, stake){
+  const p = ptById(id);
+  if(!p) return;
+  if(kind!=='da' && kind!=='ki') return;
+  applyRec(p, { k:kind, d:todayStr(), w:(store.settings.worker||'').trim(),
+                s:stake||currentStake(), t:Date.now() });
+  const c = progCounts();
+  toast(`${p.name} を ${ST_NAME[kind]} にしました（打設${c.da}／既設${c.ki}）`);
+}
+function clearRec(id){
+  const p = ptById(id);
+  if(!p || stOf(p)==='no') return;
+  applyRec(p, null);
+  toast(`${p.name} の記録を取り消しました`);
+}
+function moveRec(rec, undoing){
+  const p = ptById(rec.id);
+  if(!p) return false;
+  const v = undoing ? rec.before : rec.after;
+  if(v) p.rec = Object.assign({}, v); else delete p.rec;
+  return true;
+}
+function undoRec(){
+  const rec = recUndo.pop();
+  if(!rec){ toast('取り消せる記録の操作はありません'); return; }
+  if(!moveRec(rec, true)){ toast('対象の点が見つかりません'); return; }
+  recRedo.push(rec);
+  if(recRedo.length>REC_UNDO_MAX) recRedo.shift();
+  save(); draw(); updateActionbar(); updateProg(); refreshEdits();
+  toast('記録の操作を取り消しました');
+}
+function redoRec(){
+  const rec = recRedo.pop();
+  if(!rec){ toast('やり直せる記録の操作はありません'); return; }
+  if(!moveRec(rec, false)){ toast('対象の点が見つかりません'); return; }
+  recUndo.push(rec);
+  if(recUndo.length>REC_UNDO_MAX) recUndo.shift();
+  save(); draw(); updateActionbar(); updateProg(); refreshEdits();
+  toast('記録の操作をやり直しました');
+}
+
+/* ================= 取り込んだデータ =================
+   境界点(store.points) … 復元の対象。打設・既設を記録する
+   基準点(store.refPoints) … 参考。蛍光緑で出すだけで記録はできない
+   画地の線(store.lines) … SIMAの画地データ(D00〜D99)。線としてだけ描く
+   点は「取り込んだファイル(imports)」ごとに表示/非表示を切り替えられる。 */
+const REF_FILL='#39FF14', REF_STROKE='#0b5d1e', REF_LABEL='#0b5d1e';
+let ptMap = null;                        // id → 点（境界点＋基準点）
+function invalidatePtMap(){ ptMap = null; }
+function ptIndex(){
+  if(ptMap) return ptMap;
+  ptMap = new Map();
+  for(const p of store.points) ptMap.set(p.id, p);
+  for(const p of store.refPoints) ptMap.set(p.id, p);
+  return ptMap;
+}
+function ptById(id){ return ptIndex().get(id); }
+function importById(id){ return store.imports.find(i=>i.id===id); }
+function isImportVisible(id){ return !(store.layers.hiddenImports||[]).includes(id); }
+function pointsOf(id){ return store.points.filter(p=>p.impId===id); }
+function refPointsOf(id){ return store.refPoints.filter(p=>p.impId===id); }
+function linesOf(id){ return store.lines.filter(l=>l.impId===id); }
+function isStateVisible(k){
+  return k==='da' ? store.layers.stDa!==false
+       : k==='ki' ? store.layers.stKi!==false
+       :            store.layers.stNone!==false;
+}
+function isPointVisible(p){
+  return store.layers.pt!==false && isImportVisible(p.impId) && isStateVisible(stOf(p));
+}
+function isRefVisible(p){ return store.layers.ref!==false && isImportVisible(p.impId); }
+function isAnyPointVisible(p){ return p.ref ? isRefVisible(p) : isPointVisible(p); }
+function isLineVisible(l){ return store.layers.line!==false && isImportVisible(l.impId); }
+/* 点がどの画地に属するか（一覧のまとめ方で使う。数が多いので都度作らず控える） */
+let plotOfPt = null;
+function invalidatePlotMap(){ plotOfPt = null; }
+function plotIndex(){
+  if(plotOfPt) return plotOfPt;
+  plotOfPt = new Map();
+  for(const l of store.lines){
+    for(const id of l.ptIds) if(id && !plotOfPt.has(id)) plotOfPt.set(id, l.name || `画地${l.no}`);
+  }
+  return plotOfPt;
+}
+/* 画地の線のうち、両端の座標がそろっていて実際に引ける辺だけを数える。
+   延長も、その辺の C03 の辺長だけを足す（欠けた頂点をまたぐ辺は数えない）。 */
+function lineSegments(l, index){
+  const idx = index || ptIndex();
+  const ids = l.ptIds || [], m = ids.length;
+  if(m<2) return { n:0, total:0 };
+  const segs = l.closed ? m : m-1;
+  let n=0, total=0;
+  for(let i=0;i<segs;i++){
+    const a=idx.get(ids[i]), b=idx.get(ids[(i+1)%m]);
+    if(!a||!b) continue;
+    n++;
+    const d = (l.dists && isFinite(l.dists[i])) ? l.dists[i] : distBetween(a,b);
+    total += d;
+  }
+  return { n, total };
+}
+function plotNameOf(p){ return plotIndex().get(p.id) || ''; }
+
+/* ================= 座標系 ================= */
+/* ================= 座標系 ================= */
+const ZONES = [
+ [33,129.5],[33,131],[36,132+10/60],[33,133.5],[36,134+20/60],[36,136],[36,137+10/60],
+ [36,138.5],[36,139+50/60],[40,140+50/60],[44,140.25],[44,142.25],[44,144.25],
+ [26,142],[26,127.5],[26,124],[26,131],[20,136],[26,154]
+];
+function zoneProj(n){
+  const [lat0,lon0] = ZONES[n-1];
+  return `+proj=tmerc +lat_0=${lat0} +lon_0=${lon0} +k=0.9999 +x_0=0 +y_0=0 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`;
+}
+function epsgToZone(e){
+  if(e>=6669 && e<=6687) return e-6668;   // JGD2011
+  if(e>=2443 && e<=2461) return e-2442;   // JGD2000
+  return null;
+}
+/* 現在地に対して「ありえる系番号」を返す（|東|の小さい順）。
+   系の割り当ては都道府県・市町村ごとに決められていて幾何だけでは決まらない
+   （北海道のように1つの場所に2つの系が届く区域がある）ため、
+   1つに決め打ちせず、候補を出して選んでもらう。 */
+function zoneCandidates(lon, lat){
+  const out=[];
+  for(let i=1;i<=ZONES.length;i++){
+    try{
+      const [x,y]=proj4(zoneProj(i)).forward([lon,lat]);
+      if(Math.abs(x)<=130000 && Math.abs(y)<=300000) out.push({zone:i, x, y});
+    }catch(e){}
+  }
+  out.sort((a,b)=>Math.abs(a.x)-Math.abs(b.x));
+  return out;
+}
+let zoneAsked=false;
+/* いまの系の守備範囲から明らかに外れている場合だけ知らせる（誤った推奨をしない） */
+function checkZone(lon, lat){
+  if(zoneAsked || state.tiff) return;
+  const cand = zoneCandidates(lon, lat);
+  if(!cand.length) return;
+  if(cand.some(c=>c.zone===store.settings.zone)) return;
+  zoneAsked = true;
+  const btns = cand.slice(0,3).map(c=>({label:`第${c.zone}系にする`, fn:`applyZone(${c.zone})`}));
+  btns.push({label:'このまま', fn:'hideAlert()'});
+  showAlert(`現在地は<b>第${store.settings.zone}系の範囲から外れています</b>。`
+    + `この場所は 第${cand.map(c=>c.zone).slice(0,3).join('系 / 第')}系 のいずれかです。`
+    + `座標がずれるので、現場の系に合わせてください。`, btns);
+}
+function applyZone(z){
+  hideAlert();
+  changeZone(z);
+  if(state.gps.ok){
+    state.view.cx = state.gps.x; state.view.cy = state.gps.y;
+  }
+  draw();
+}
+function currentZone(){
+  return epsgToZone(state.epsg) || store.settings.zone;
+}
+function currentProj(){ return proj4(zoneProj(currentZone())); }
+/* 平面直角座標 → 経緯度（[経度, 緯度]）。失敗したら null */
+function xyToLL(x, y, zone){
+  try{
+    const pr = zone ? proj4(zoneProj(zone)) : currentProj();
+    const ll = pr.inverse([x, y]);
+    return (isFinite(ll[0]) && isFinite(ll[1])) ? ll : null;
+  }catch(e){ return null; }
+}
+/* 経緯度 → 平面直角座標 */
+function llToXY(lon, lat, zone){
+  try{
+    const pr = zone ? proj4(zoneProj(zone)) : currentProj();
+    const m = pr.forward([lon, lat]);
+    return (isFinite(m[0]) && isFinite(m[1])) ? m : null;
+  }catch(e){ return null; }
+}
+/* 経緯度を持っていない古い点に、いまの系から逆算して埋める（1回だけ） */
+function fillMissingLL(){
+  let n = 0;
+  const z = store.settings.zone;
+  for(const p of store.points){
+    if(isFinite(p.lat) && isFinite(p.lon)) continue;
+    const ll = xyToLL(p.x, p.y, p.zone || z);
+    if(!ll) continue;
+    p.lon = +ll[0].toFixed(8); p.lat = +ll[1].toFixed(8);
+    if(!p.zone) p.zone = z;
+    n++;
+  }
+  return n;
+}
+/* 系番号を変えたときに、いま持っているデータを新しい系へ引き直す。
+   点は保存してある経緯度から計算するので、系を間違えて作業していても正しく戻る。 */
+function reprojectAll(oldZone, newZone){
+  if(oldZone === newZone) return { pts:0, refs:0, memo:0 };
+  const from = proj4(zoneProj(oldZone)), to = proj4(zoneProj(newZone));
+  const conv = (x, y)=>{ try{ return to.forward(from.inverse([x, y])); }catch(e){ return null; } };
+  const r = { pts:0, refs:0, memo:0 };
+  for(const p of store.points){
+    let m = null;
+    if(isFinite(p.lat) && isFinite(p.lon)) m = llToXY(p.lon, p.lat, newZone);   // 経緯度が真
+    if(!m) m = conv(p.x, p.y);
+    if(!m) continue;
+    p.x = m[0]; p.y = m[1]; p.zone = newZone; r.pts++;
+  }
+  for(const p of store.refPoints){
+    const m = conv(p.x, p.y);
+    if(m){ p.x = m[0]; p.y = m[1]; r.refs++; }
+  }
+  for(const st of store.strokes){
+    if(!st.pts) continue;
+    st.pts = st.pts.map(q=>{ const m = conv(q[0], q[1]); return m ? [m[0], m[1]] : q; });
+    r.memo++;
+  }
+  const v = conv(state.view.cx, state.view.cy);
+  if(v){ state.view.cx = v[0]; state.view.cy = v[1]; }
+  if(state.gps.ok){
+    const g = llToXY(state.gps.lon, state.gps.lat, newZone);
+    if(g){ state.gps.x = g[0]; state.gps.y = g[1]; }
+  }
+  store.settings.lastView = null;
+  return r;
+}
+/* 系番号を変える（データがあるときは引き直すかを尋ねる） */
+function changeZone(newZone, silent){
+  const oldZone = store.settings.zone;
+  if(oldZone === newZone){ return false; }
+  const has = store.points.length + store.refPoints.length + store.strokes.length;
+  let move = false;
+  if(has){
+    move = confirm(
+      `座標系を 第${oldZone}系 → 第${newZone}系 に変えます。\n\n`
+      + `いまある 点${store.points.length} / 取込${store.refPoints.length} / メモ${store.strokes.length} を`
+      + `新しい系の座標に引き直しますか?\n\n`
+      + `［OK］引き直す（登録時の経緯度から計算し直します。ふつうはこちら）\n`
+      + `［キャンセル］数値はそのままにする（系の設定だけ変えます）`);
+  }
+  store.settings.zone = newZone;
+  let r = null;
+  if(move) r = reprojectAll(oldZone, newZone);
+  save(); draw(); renderRibbon(); updateGpsLabel();
+  if(!silent) toast(`座標系を第${newZone}系にしました`
+    + (r ? `（点${r.pts}・取込${r.refs}・メモ${r.memo}件を引き直し）` : ''));
+  return true;
+}
+/* GeoTIFFが「投影座標(平面直角)」か「経緯度」かの判定。
+   ProjectedCSTypeGeoKey だけを見ると、EPSGが user-defined(32767) の投影TIFFで
+   GeographicTypeGeoKey が立っているために経緯度と誤認する。
+   GTModelTypeGeoKey(1=投影/2=経緯度) を主に使い、無い場合は範囲の大きさで判定する。 */
+function looksGeographic(bbox){
+  if(!bbox) return false;
+  const w=Math.abs(bbox[2]-bbox[0]), h=Math.abs(bbox[3]-bbox[1]);
+  const inRange = Math.abs(bbox[0])<=180 && Math.abs(bbox[2])<=180
+               && Math.abs(bbox[1])<=90  && Math.abs(bbox[3])<=90;
+  return inRange && w<=10 && h<=10;   // 平面直角座標なら図郭が10m四方ということは無い
+}
+function detectProjection(gk, bbox){
+  gk=gk||{};
+  const raw=gk.ProjectedCSTypeGeoKey;
+  const epsg=(raw && raw!==32767 && raw!==0) ? raw : null;
+  const model=gk.GTModelTypeGeoKey;              // 1=Projected 2=Geographic 3=Geocentric
+  const byShape=looksGeographic(bbox);
+  let geographic;
+  if(model===1) geographic=false;
+  else if(model===2) geographic=true;
+  else geographic = epsg ? false : byShape;
+  // タグと実際の座標値が食い違う場合は座標値を信じる（誤判定すると現在地が図面外へ飛ぶため）
+  let warn='';
+  if(geographic!==byShape){
+    warn = byShape
+      ? '座標値が経緯度に見えるため経緯度として扱います'
+      : '座標値が投影座標に見えるため平面直角座標として扱います';
+    geographic = byShape;
+  }
+  return {epsg, geographic, warn};
+}
+function gpsToMap(lon,lat){
+  if(state.geographic) return [lon,lat];
+  return currentProj().forward([lon,lat]);
+}
+function pointToXY(p){   // SIMA用 X=北, Y=東
+  if(state.geographic){ const [e,n]=currentProj().forward([p.x,p.y]); return [n,e]; }
+  return [p.y,p.x];
+}
+/* 精度円の半径を地図単位へ。経緯度表示のときは東西と南北でスケールが違うため個別に返す */
+function accToMapUnits(acc){
+  if(state.geographic) return accToMapUnitsXY(acc)[0];
+  return acc;
+}
+function accToMapUnitsXY(acc){
+  if(!state.geographic) return [acc,acc];
+  const mPerDegLat=110574;
+  const mPerDegLon=111320*Math.max(0.01, Math.cos(state.gps.lat*Math.PI/180));
+  return [acc/mPerDegLon, acc/mPerDegLat];
+}
+/* X(北),Y(東) → 画面座標系(x=東, y=北)。経緯度表示中は投影して合わせる */
+function xyToMapPoint(X,Y){
+  if(state.geographic){
+    try{ const ll=currentProj().inverse([Y,X]); return {x:ll[0], y:ll[1]}; }catch(e){ return {x:Y, y:X}; }
+  }
+  return {x:Y, y:X};
+}
+function pointToXY(p){   // 表示用 X=北, Y=東
+  if(state.geographic){ const [e,n]=currentProj().forward([p.x,p.y]); return [n,e]; }
+  return [p.y,p.x];
+}
+/* 2点間の距離（地図単位。経緯度表示中は平面直角に直してから測る） */
+function distBetween(a,b){
+  if(!a||!b) return 0;
+  if(state.geographic){
+    try{
+      const pr=currentProj();
+      const p1=pr.forward([a.x,a.y]), p2=pr.forward([b.x,b.y]);
+      return Math.hypot(p1[0]-p2[0], p1[1]-p2[1]);
+    }catch(e){}
+  }
+  return Math.hypot(a.x-b.x, a.y-b.y);
+}
+function fmtDist(d){ return (Math.round(d*1000)/1000).toFixed(3); }
+
+/* ================= 永続化 ================= */
+const DB_NAME='sentenApp', DB_STORE='kv', DB_KEY='store', SNAP_KEEP=10;
+let dbPromise=null;
+function idb(){
+  if(dbPromise) return dbPromise;
+  dbPromise = new Promise((res,rej)=>{
+    if(!self.indexedDB){ rej(new Error('IndexedDB非対応')); return; }
+    const rq=indexedDB.open(DB_NAME,3);
+    rq.onupgradeneeded=()=>{
+      const db=rq.result;
+      if(!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE);
+      if(!db.objectStoreNames.contains('snapshots')) db.createObjectStore('snapshots',{keyPath:'id'});
+      if(!db.objectStoreNames.contains('tiles')) db.createObjectStore('tiles');       // 地図タイルの控え
+      if(!db.objectStoreNames.contains('tilemeta')) db.createObjectStore('tilemeta'); // 控えの日時と大きさ
+    };
+    rq.onsuccess=()=>res(rq.result);
+    rq.onerror=()=>rej(rq.error||new Error('IndexedDBを開けません'));
+  }).catch(e=>{ dbPromise=null; throw e; });
+  return dbPromise;
+}
+function idbReq(storeName, mode, fn){
+  return idb().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(storeName,mode);
+    const rq=fn(tx.objectStore(storeName));
+    tx.onabort=tx.onerror=()=>rej(tx.error||new Error('保存に失敗しました'));
+    tx.oncomplete=()=>res(rq?rq.result:undefined);
+  }));
+}
+function idbGet(storeName,key){ return idbReq(storeName,'readonly',s=>s.get(key)); }
+function idbPut(storeName,val,key){ return idbReq(storeName,'readwrite',s=>s.put(val,key)); }
+
+function snapshotJson(){ return JSON.stringify(store); }
+function markSaveError(msg){
+  state.saveError=true;
+  showAlert(`保存に失敗しています（${msg}）。<b>今すぐ「バックアップ保存（JSON）」で控えを取ってください。</b>`,
+    [{label:'バックアップ保存',fn:'exportJson()'},{label:'閉じる',fn:'hideAlert()'}]);
+}
+function clearSaveError(){
+  if(state.saveError){ state.saveError=false; hideAlert(); }
+}
+let saveTimer=null, savePending=false, lastSavedJson='';
+function save(){                       // 呼び出し側は同期のまま。実書込はまとめて行う
+  savePending=true;
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(flushSave,250);
+}
+async function flushSave(){
+  if(!savePending) return;
+  savePending=false;
+  const json=snapshotJson();
+  try{
+    await idbPut(DB_STORE,json,DB_KEY);
+    clearSaveError();
+    if(json!==lastSavedJson){ lastSavedJson=json;
+      // 中身が空の世代は残さない（復元しても戻るものが無いため）
+      if(store.points.length||store.routes.length||store.strokes.length) pushSnapshot(json);
+    }
+  }catch(e){
+    try{ localStorage.setItem(LS_KEY,json); clearSaveError(); }   // 最後の砦
+    catch(e2){ markSaveError(e.message||e); }
+  }
+}
+window.addEventListener('pagehide', ()=>{ if(savePending){ clearTimeout(saveTimer); flushSave(); } });
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden && savePending){ clearTimeout(saveTimer); flushSave(); } });
+
+/* --- 世代バックアップ（最新SNAP_KEEP世代＋日付ごとの最初の1件は残す） --- */
+let snapBusy=false;
+async function pushSnapshot(json){
+  if(snapBusy) return;
+  snapBusy=true;
+  try{
+    const now=new Date();
+    const rec={ id:now.toISOString(), date:realTodayStr(), json,
+                pt:store.points.length, rt:store.routes.length, st:store.strokes.length };
+    await idbPut('snapshots',rec);
+    const all=await idbReq('snapshots','readonly',s=>s.getAll());
+    all.sort((a,b)=>a.id<b.id?1:-1);
+    const keepDates=new Set(), del=[];
+    all.forEach((r,i)=>{
+      const firstOfDay = !keepDates.has(r.date);
+      keepDates.add(r.date);
+      if(i>=SNAP_KEEP && !firstOfDay) del.push(r.id);
+    });
+    if(del.length) await idbReq('snapshots','readwrite',s=>{ del.forEach(id=>s.delete(id)); });
+  }catch(e){}
+  finally{ snapBusy=false; }
+}
+function applyLoaded(d){
+  if(!d) return;
+  Object.assign(store.settings, d.settings||{});
+  Object.assign(store.layers, d.layers||{});
+  store.points   = d.points||[];
+  store.refPoints= d.refPoints||[];
+  store.lines    = d.lines||[];
+  store.routes   = d.routes||[];
+  store.strokes  = d.strokes||[];
+  store.imports  = d.imports||[];
+  store.disp = Object.assign({}, DEFAULT_DISP, d.disp||{});
+  invalidatePtMap(); invalidatePlotMap();
+}
+async function load(){
+  let loaded=null;
+  try{
+    const json=await idbGet(DB_STORE,DB_KEY);
+    if(json) loaded=JSON.parse(json);
+  }catch(e){}
+  if(!loaded){
+    try{
+      const raw=localStorage.getItem(LS_KEY);
+      if(raw){
+        loaded=JSON.parse(raw);
+        applyLoaded(loaded);
+        await idbPut(DB_STORE,JSON.stringify(store),DB_KEY).catch(()=>{});
+        loaded=null;
+      }
+    }catch(e){}
+  }
+  applyLoaded(loaded);
+  ['pt','ref','line','route','dist','memo','base','map','stNone','stDa','stKi'].forEach(k=>{
+    if(store.layers[k]===undefined) store.layers[k]=true;
+  });
+  if(!Array.isArray(store.layers.hiddenImports)) store.layers.hiddenImports=[];
+  if(!store.disp) store.disp={};
+  for(const k in DEFAULT_DISP) if(store.disp[k]===undefined) store.disp[k]=DEFAULT_DISP[k];
+  for(const k in DEFAULT_SETTINGS)
+    if(store.settings[k]===undefined) store.settings[k]=DEFAULT_SETTINGS[k];
+  stakeList();
+  if(!stakeList().includes(store.settings.stake)) store.settings.stake=stakeList()[0];
+  applyFontScale();
+  lastSavedJson=snapshotJson();
+  requestPersist();
+}
+async function requestPersist(){
+  try{
+    if(navigator.storage && navigator.storage.persist){
+      const already=await navigator.storage.persisted();
+      if(!already) await navigator.storage.persist();
+    }
+  }catch(e){}
+}
+async function showStorageInfo(){
+  let mode='localStorage（IndexedDB非対応）', persisted='不明', usage='不明', snaps='0';
+  try{ await idb(); mode='IndexedDB'; }catch(e){}
+  try{
+    if(navigator.storage){
+      if(navigator.storage.persisted) persisted=(await navigator.storage.persisted())?'あり（自動削除されにくい）':'なし（ホーム画面に追加すると付与されやすくなります）';
+      if(navigator.storage.estimate){
+        const es=await navigator.storage.estimate();
+        usage=`${(es.usage/1048576).toFixed(1)}MB / 上限の目安 ${(es.quota/1048576).toFixed(0)}MB`;
+      }
+    }
+  }catch(e){}
+  try{ snaps=String((await idbReq('snapshots','readonly',s=>s.getAllKeys())).length); }catch(e){}
+  const tinfo = await tileCacheInfo();
+  const tileLine = tinfo.count
+    ? `${tinfo.count}枚 / 約${(tinfo.bytes/1048576).toFixed(1)}MB（上限 ${(TILE_MAX_BYTES/1048576).toFixed(0)}MB・超えると古い順に自動削除）`
+    : 'なし（レイヤ画面の［この範囲を圏外用に控える］で保存できます）';
+  let offline='未対応（HTTPSで開いていない可能性があります）';
+  try{
+    if(window.caches){
+      const key=(await caches.keys()).find(k=>k.startsWith('fukugen-map-'));
+      if(!key) offline='未設定（sw.js が同じフォルダにあるか確認してください）';
+      else{
+        const c=await caches.open(key);
+        offline=(await c.match(location.href.split('#')[0],{ignoreSearch:true}))
+          ? '準備済み（この端末は圏外でも起動できます）'
+          : 'まだ（電波のある場所でもう一度開いてください）';
+      }
+    }
+  }catch(e){}
+  const c=progCounts(), le=store.settings.lastExport;
+  alert('保存状態\n\n'
+    +`アプリ: ${appFull()}\n`
+    +`ビルド: ${APP_BUILD}\n\n`
+    +`保存方式: ${mode}\n`
+    +`永続化: ${persisted}\n`
+    +`オフライン起動: ${offline}\n`
+    +`使用量: ${usage}\n`
+    +`地図の控え: ${tileLine}\n`
+    +`自動バックアップ: ${snaps}世代\n`
+    +`最後のJSONバックアップ: ${le?le:'まだ保存していません'}\n\n`
+    +`境界点 ${c.all}点（打設${c.da} / 既設${c.ki} / 未${c.no}）\n`
+    +`画地の線 ${store.lines.length}／計測線 ${store.routes.length}／基準点 ${store.refPoints.length}／メモ ${store.strokes.length}\n\n`
+    +'※端末内の保存は端末の故障・初期化で失われます。作業終了時にJSONバックアップを端末外へ保存してください。');
+}
+function daysSince(ds){
+  if(!ds) return 999;
+  const t=Date.parse(ds+'T00:00:00');
+  if(isNaN(t)) return 999;
+  return Math.floor((Date.parse(realTodayStr()+'T00:00:00')-t)/86400000);
+}
+const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+
+/* ================= 警告バー ================= */
+function showAlert(html, buttons){
+  const el=document.getElementById('alertBar');
+  el.style.background='';                       // 既定（赤）に戻す。呼び出し側で上書き可
+  el.innerHTML = html + (buttons||[]).map(b=>`<button type="button" onclick="${b.fn}">${b.label}</button>`).join('');
+  el.style.display='block';
+  resize();
+}
+function hideAlert(){
+  const el=document.getElementById('alertBar');
+  el.style.display='none'; el.innerHTML='';
+  resize();
+}
+
+/* ================= キャンバス ================= */
+const canvas = document.getElementById('map');
+const ctx = canvas.getContext('2d');
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = window.devicePixelRatio||1;
+  const r = canvas.parentElement.getBoundingClientRect();
+  W=r.width; H=r.height;
+  canvas.width=W*DPR; canvas.height=H*DPR;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  draw();
+}
+window.addEventListener('resize', resize);
+
+const toScr = (x,y)=>[ (x-state.view.cx)*state.view.scale + W/2, (state.view.cy-y)*state.view.scale + H/2 ];
+const toMap = (sx,sy)=>[ state.view.cx + (sx-W/2)/state.view.scale, state.view.cy - (sy-H/2)/state.view.scale ];
+
+/* ================= 描画 =================
+   下から順に: 背景地図 → 図面 → 手書きメモ → 画地の線 → 計測線 → 距離 →
+               基準点 → 境界点 → 現在地
+   点が多いときは、まず画面に入っている数を数えて出し方を決める（線と粒だけ／点／点名つき）。 */
+function inView(sx,sy,m){ const k=m||30; return sx>=-k && sx<=W+k && sy>=-k && sy<=H+k; }
+function visiblePointCount(){
+  let n=0;
+  for(const p of store.points){
+    if(!isPointVisible(p)) continue;
+    const [x,y]=toScr(p.x,p.y);
+    if(inView(x,y)) n++;
+    if(n>20000) break;
+  }
+  return n;
+}
+function drawMode(n){
+  const lim = Math.max(20, +store.settings.thinPt||300);
+  const lim2= Math.max(10, +store.settings.thinName||150);
+  if(n>lim) return 'dot';
+  return n<=lim2 ? 'name' : 'mark';
+}
+function draw(){
+  clearLabelBoxes();
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#d8d8d8'; ctx.fillRect(0,0,W,H);
+  drawBaseMap();
+  if(state.tiff && store.layers.base!==false){
+    const mag=state.view.scale/nativePPU();
+    ctx.imageSmoothingEnabled = mag < 2;
+    ctx.imageSmoothingQuality='high';
+    ctx.save();
+    ctx.globalAlpha = tiffAlpha();
+    for(const t of visibleTiffs()) drawGeoLayer(t);
+    if(state.detail) drawGeoLayer(state.detail);
+    ctx.restore();
+    scheduleDetail();
+  }
+  if(store.layers.memo!==false) for(const s of store.strokes){
+    ctx.strokeStyle=s.color; ctx.lineWidth=Math.max(1,s.w*state.view.scale);
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.beginPath();
+    s.pts.forEach((p,i)=>{ const [x,y]=toScr(p[0],p[1]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+    ctx.stroke();
+  }
+  const idx = ptIndex();
+  const showDist = store.layers.dist!==false;
+  const distMin = Math.max(10, +store.settings.thinDist||40);
+  const distPx = labelFont('distSize');
+  /* --- 画地の線（塗らない。同じ点を何度も通る一筆書きのため） --- */
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.strokeStyle=disp('lineColor'); ctx.lineWidth=+disp('lineWidth')||2;
+  ctx.setLineDash([]);
+  const distJobs=[];
+  for(const l of store.lines){
+    if(!isLineVisible(l)) continue;
+    const ids=l.ptIds, n=ids.length;
+    if(n<2) continue;
+    const segs = l.closed ? n : n-1;
+    ctx.beginPath();
+    for(let i=0;i<segs;i++){
+      const a=idx.get(ids[i]), b=idx.get(ids[(i+1)%n]);
+      if(!a||!b) continue;
+      const A=toScr(a.x,a.y), B=toScr(b.x,b.y);
+      if(!segOnScreen(A,B)) continue;
+      ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]);
+      if(showDist){
+        const px=Math.hypot(B[0]-A[0],B[1]-A[1]);
+        if(px>=distMin){
+          const d=l.dists && isFinite(l.dists[i]) ? l.dists[i] : distBetween(a,b);
+          distJobs.push([A,B,fmtDist(d)]);
+        }
+      }
+    }
+    ctx.stroke();
+  }
+  /* --- 計測線 --- */
+  ctx.strokeStyle=disp('routeColor'); ctx.lineWidth=+disp('routeWidth')||3;
+  if(store.layers.route!==false) for(const r of store.routes){
+    const ids=r.ptIds||[];
+    if(ids.length<2) continue;
+    ctx.beginPath();
+    let started=false;
+    for(let i=0;i<ids.length;i++){
+      const p=idx.get(ids[i]); if(!p) continue;
+      const [x,y]=toScr(p.x,p.y);
+      started ? ctx.lineTo(x,y) : (ctx.moveTo(x,y), started=true);
+    }
+    ctx.stroke();
+    if(showDist) for(let i=0;i<ids.length-1;i++){
+      const a=idx.get(ids[i]), b=idx.get(ids[i+1]);
+      if(!a||!b) continue;
+      const A=toScr(a.x,a.y), B=toScr(b.x,b.y);
+      if(!segOnScreen(A,B)) continue;
+      if(Math.hypot(B[0]-A[0],B[1]-A[1])>=distMin) distJobs.push([A,B,fmtDist(distBetween(a,b))]);
+    }
+  }
+  /* --- 計測中の線 --- */
+  if(state.currentRoute.length){
+    const pts = state.currentRoute.map(id=>idx.get(id)).filter(Boolean);
+    ctx.strokeStyle='#ff8c00'; ctx.lineWidth=4; ctx.setLineDash([8,5]);
+    ctx.beginPath();
+    pts.forEach((p,i)=>{ const [x,y]=toScr(p.x,p.y); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+    ctx.stroke(); ctx.setLineDash([]);
+    for(const p of pts){ const [x,y]=toScr(p.x,p.y);
+      ctx.strokeStyle='#ff8c00'; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(x,y,11,0,7); ctx.stroke(); }
+    for(let i=0;i<pts.length-1;i++){
+      const A=toScr(pts[i].x,pts[i].y), B=toScr(pts[i+1].x,pts[i+1].y);
+      if(Math.hypot(B[0]-A[0],B[1]-A[1])>=24) distJobs.push([A,B,fmtDist(distBetween(pts[i],pts[i+1]))]);
+    }
+  }
+  /* --- 基準点（参考。蛍光緑の丸十字） --- */
+  if(store.layers.ref!==false){
+    const r=7*sizeMul('refMarkSize');
+    for(const p of store.refPoints){
+      if(!isRefVisible(p)) continue;
+      const [x,y]=toScr(p.x,p.y);
+      if(!inView(x,y)) continue;
+      ctx.fillStyle=disp('refColor'); ctx.strokeStyle=REF_STROKE; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(x,y,r,0,7); ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x-r,y); ctx.lineTo(x+r,y); ctx.moveTo(x,y-r); ctx.lineTo(x,y+r);
+      ctx.stroke();
+      labelNoOverlap(x, y-r-5, p.name, REF_LABEL, labelFont('refNameSize'));
+    }
+  }
+  /* --- 境界点 --- */
+  const nvis = visiblePointCount();
+  const dm = drawMode(nvis);
+  state.drawInfo = { n:nvis, mode:dm };
+  if(store.layers.pt!==false){
+    const pr = 6*sizeMul('ptMarkSize');
+    const nf = labelFont('ptNameSize');
+    for(const p of store.points){
+      if(!isPointVisible(p)) continue;
+      const [x,y]=toScr(p.x,p.y);
+      if(!inView(x,y)) continue;
+      const k=stOf(p), col=stColor(k);
+      if(dm==='dot'){
+        ctx.fillStyle=col;
+        ctx.beginPath(); ctx.arc(x,y,2.5,0,7); ctx.fill();
+        continue;
+      }
+      ctx.lineWidth=2;
+      if(k==='no'){ ctx.fillStyle='#fff'; ctx.strokeStyle=col; }
+      else        { ctx.fillStyle=col;    ctx.strokeStyle='#fff'; }
+      ctx.beginPath(); ctx.arc(x,y,pr,0,7); ctx.fill(); ctx.stroke();
+      if(dm==='name') labelNoOverlap(x, y-pr-6, p.name, k==='no'?'#5a6068':col, nf);
+    }
+  }
+  /* --- 距離（線の上に、線に沿って）---
+     点名のほうが「いまどの点を記録するか」に直結するので、
+     場所の取り合いになったときは点名を優先して距離を落とす。 */
+  for(const [A,B,t] of distJobs) drawDistLabel(A,B,t,distPx);
+  if(state.gps.ok){
+    const [x,y]=toScr(state.gps.x,state.gps.y);
+    const [ax,ay]=accToMapUnitsXY(state.gps.acc);
+    const rx=Math.max(ax*state.view.scale,4), ry=Math.max(ay*state.view.scale,4);
+    ctx.fillStyle='rgba(30,115,210,.15)'; ctx.strokeStyle='rgba(30,115,210,.5)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#1e73d2'; ctx.strokeStyle='#fff'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(x,y,8,0,7); ctx.fill(); ctx.stroke();
+  }
+  drawScaleBar();
+  drawCredit();
+  updateZoomLabel();
+  updateHint();
+}
+/* --- 文字の重なりよけ ---
+   点名や距離をそのまま全部書くと、密なところで文字が重なって読めなくなる。
+   すでに書いた場所を覚えておき、ぶつかるものは書かない（拡大すれば出てくる）。 */
+let labelBoxes=[];
+function clearLabelBoxes(){ labelBoxes=[]; }
+function placeLabel(cx, cy, w, h){
+  const x0=cx-w/2-1, x1=cx+w/2+1, y0=cy-h/2-1, y1=cy+h/2+1;
+  for(const b of labelBoxes){
+    if(x0<b[2] && x1>b[0] && y0<b[3] && y1>b[1]) return false;
+  }
+  labelBoxes.push([x0,y0,x1,y1]);
+  return true;
+}
+/* 線分が画面に掛かっているか（掛かっていない辺は距離も線も作らない） */
+function segOnScreen(A,B){
+  const m=60;
+  if(A[0]< -m && B[0]< -m) return false;
+  if(A[0]>W+m && B[0]>W+m) return false;
+  if(A[1]< -m && B[1]< -m) return false;
+  if(A[1]>H+m && B[1]>H+m) return false;
+  return true;
+}
+/* 距離は線に沿って書く。上下がひっくり返らないよう角度を折り返す */
+function drawDistLabel(A,B,text,px){
+  const cx=(A[0]+B[0])/2, cy=(A[1]+B[1])/2;
+  ctx.font='bold '+(px||12)+'px sans-serif';
+  const w=ctx.measureText(text).width, h=(px||12)+4;
+  /* 線に沿って傾くので、当たり判定は縦横の長い方で見る（多めに見て重なりを避ける） */
+  const m=Math.max(w,h);
+  if(!placeLabel(cx, cy, Math.min(w+6,m), Math.min(h+4,m))) return;
+  let ang=Math.atan2(B[1]-A[1], B[0]-A[0]);
+  if(ang> Math.PI/2) ang-=Math.PI;
+  if(ang<-Math.PI/2) ang+=Math.PI;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(ang);
+  ctx.textAlign='center'; ctx.textBaseline='bottom';
+  ctx.lineWidth=3; ctx.strokeStyle='#fff'; ctx.strokeText(text,0,-2);
+  ctx.fillStyle=disp('distColor'); ctx.fillText(text,0,-2);
+  ctx.restore();
+  ctx.textBaseline='alphabetic';
+}
+function label(x,y,text,color,px){
+  ctx.font='bold '+(px||12)+'px sans-serif'; ctx.textAlign='center';
+  ctx.lineWidth=3; ctx.strokeStyle='#fff'; ctx.strokeText(text,x,y);
+  ctx.fillStyle=color; ctx.fillText(text,x,y);
+}
+function drawGeoLayer(t){
+  const b=t.bbox;
+  const [sx0,sy0]=toScr(b[0],b[3]), [sx1,sy1]=toScr(b[2],b[1]);
+  ctx.drawImage(t.canvas, sx0, sy0, sx1-sx0, sy1-sy0);
+}
+/* いまの表示に見合った地図の細かさ（ズーム段）。
+   drawBaseMap は上限・下限で丸めた値しか残さないので、
+   「その年代には無い細かさを求めている」かどうかは、丸める前の値で見る。 */
+function wantedTileZoom(){
+  if(state.geographic) return null;
+  try{
+    const pr=currentProj();
+    const lats=[[0,0],[W,0],[0,H],[W,H]].map(([sx,sy])=>{
+      const m=toMap(sx,sy);
+      const ll=pr.inverse([m[0],m[1]]);
+      return ll && ll[1];
+    });
+    if(lats.some(v=>!isFinite(v))) return null;
+    const latC=(Math.min(...lats)+Math.max(...lats))/2;
+    if(Math.abs(latC)>85) return null;
+    return tileZoomFor(latC);
+  }catch(e){ return null; }
+}
+/* 重なるなら書かない点名 */
+function labelNoOverlap(x,y,text,color,px){
+  ctx.font='bold '+(px||12)+'px sans-serif';
+  const w=ctx.measureText(text).width, h=(px||12)+2;
+  if(!placeLabel(x, y-h/2, w+4, h+2)) return;
+  label(x,y,text,color,px);
+}
+/* 画面右上の案内（点を粒にしているとき・航空写真の限界を超えたとき） */
+function updateHint(){
+  const el=document.getElementById('fixBar');
+  if(!el) return;
+  const msgs=[];
+  const def=baseMapDef();
+  const z=wantedTileZoom();
+  if(def.url && z!==null){
+    if(z > def.max)
+      msgs.push(`これ以上は細かくなりません<span class="sub">${esc(def.name)}</span>`);
+    else if(z < def.min)
+      msgs.push(`もっと拡大すると出ます<span class="sub">${esc(def.name)}</span>`);
+  }
+  if(state.drawInfo.mode==='dot' && state.drawInfo.n)
+    msgs.push(`粒だけ表示（${state.drawInfo.n}点）<span class="sub">拡大すると点名まで出ます</span>`);
+  if(!msgs.length){ el.style.display='none'; el.innerHTML=''; return; }
+  el.style.display='block';
+  el.style.background='rgba(30,58,95,.90)';
+  el.innerHTML=msgs.join('<br>');
+}
+/* ヘッダーは狭いので数字だけ。内訳は大ボタンと一覧に出す */
+function updateProg(){
+  const el=document.getElementById('progChip');
+  if(!el) return;
+  const c=progCounts();
+  if(!c.all){ el.textContent='—'; el.title='境界点を取り込んでください'; return; }
+  el.textContent=`${c.done}/${c.all}`;
+  el.title=`${c.all}点中 ${c.done}点を記録（打設${c.da}／既設${c.ki}／未${c.no}）`;
+}
+
+/* ================= TIFFの画素読込 ================= */
+/* ================= TIFFの画素読込（色の作り方を統一） ================= */
+let tiffWarn='';
+const tiffNotes=new Set();
+function note(msg){ tiffNotes.add(msg); tiffWarn=[...tiffNotes].join(' / '); }
+let lastColorPath=null;   // 直近に成功した色の作り方（'rgb' or 'raw'）
+async function readRGBSafe(img, opts, force){
+  const mode=store.settings.colorMode||'auto';
+  const useRaw = force==='raw' || (mode!=='auto' && force!=='rgb');
+  if(useRaw){
+    const r=await img.readRasters(Object.assign({interleave:false}, opts||{}));
+    lastColorPath='raw';
+    return rastersToRGB(r, img, mode==='auto'?undefined:mode);
+  }
+  try{
+    const d=await img.readRGB(Object.assign({interleave:true}, opts||{}));
+    const n=(opts&&opts.width?opts.width*opts.height:img.getWidth()*img.getHeight());
+    const fd=img.fileDirectory||{};
+    const hasColor=(fd.ColorMap&&fd.ColorMap.length>=3)||(fd.SamplesPerPixel||1)>=3;
+    if(d.length/n<3 && hasColor){
+      note('readRGBが白黒を返したため生データから色展開');
+      const r=await img.readRasters(Object.assign({interleave:false}, opts||{}));
+      lastColorPath='raw';
+      return rastersToRGB(r, img);
+    }
+    lastColorPath='rgb';
+    return d;
+  }catch(e){
+    note('readRGB非対応のため生データから変換（'+e.message+'）');
+    const r=await img.readRasters(Object.assign({interleave:false}, opts||{}));
+    lastColorPath='raw';
+    return rastersToRGB(r, img);
+  }
+}
+function rastersToRGB(r, img, mode){
+  const fd=img.fileDirectory||{};
+  const bits=(fd.BitsPerSample&&fd.BitsPerSample[0])||8;
+  let photo=fd.PhotometricInterpretation;
+  let cmap=fd.ColorMap;
+  const n=r[0].length;
+  const out=new Uint8Array(n*3);
+  const maxv=Math.pow(2,bits)-1;
+  if(mode==='gray'){ cmap=null; photo=1; }
+  if(mode==='rgb'){ cmap=null; photo=2; }
+  if(mode==='palette' && !cmap) note('ColorMapが無いためパレット指定を無視');
+  if(cmap && cmap.length>=3 && r.length===1){          // パレットカラー
+    const L=Math.floor(cmap.length/3);
+    note('パレットカラーとして展開');
+    for(let i=0;i<n;i++){
+      const v=Math.min(L-1, r[0][i]|0);
+      out[i*3]=cmap[v]>>>8; out[i*3+1]=cmap[L+v]>>>8; out[i*3+2]=cmap[2*L+v]>>>8;
+    }
+    return out;
+  }
+  const sc=255/(maxv||255);
+  if(r.length>=3){
+    if(photo===6){                                     // YCbCr → RGB
+      note('YCbCrをRGB変換');
+      for(let i=0;i<n;i++){
+        const Y=r[0][i]*sc, Cb=r[1][i]*sc-128, Cr=r[2][i]*sc-128;
+        out[i*3]  =Math.max(0,Math.min(255, Y+1.402*Cr));
+        out[i*3+1]=Math.max(0,Math.min(255, Y-0.344136*Cb-0.714136*Cr));
+        out[i*3+2]=Math.max(0,Math.min(255, Y+1.772*Cb));
+      }
+      return out;
+    }
+    if(photo===5){                                     // CMYK → RGB
+      note('CMYKをRGB変換');
+      const k=r[3]||null;
+      for(let i=0;i<n;i++){
+        const K=k?k[i]*sc:0;
+        out[i*3]  =Math.max(0,255-(r[0][i]*sc)-K);
+        out[i*3+1]=Math.max(0,255-(r[1][i]*sc)-K);
+        out[i*3+2]=Math.max(0,255-(r[2][i]*sc)-K);
+      }
+      return out;
+    }
+    for(let i=0;i<n;i++){
+      out[i*3]=r[0][i]*sc; out[i*3+1]=r[1][i]*sc; out[i*3+2]=r[2][i]*sc;
+    }
+    return out;
+  }
+  const inv = photo===0;                               // 0=WhiteIsZero
+  note('単バンドのため白黒表示');
+  for(let i=0;i<n;i++){
+    let v=r[0][i]*sc; if(inv) v=255-v;
+    out[i*3]=out[i*3+1]=out[i*3+2]=v;
+  }
+  return out;
+}
+function rgbToCanvas(rgb,w,h){
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  const c2=cv.getContext('2d');
+  const idata=c2.createImageData(w,h);
+  const n=w*h, ch=rgb.length/n;
+  for(let i=0;i<n;i++){
+    idata.data[i*4]=rgb[i*ch]; idata.data[i*4+1]=rgb[i*ch+1];
+    idata.data[i*4+2]=rgb[i*ch+2]; idata.data[i*4+3]=ch===4?rgb[i*ch+3]:255;
+  }
+  c2.putImageData(idata,0,0);
+  return cv;
+}
+function tiffDiagText(file,img){
+  const fd=img.fileDirectory||{};
+  const COMP={1:'非圧縮',5:'LZW',6:'JPEG(旧)',7:'JPEG',8:'Deflate',32773:'PackBits',34712:'JPEG2000',50000:'ZSTD',50001:'WebP'};
+  return [
+    `ファイル: ${file?file.name:'-'}`,
+    `サイズ: ${file?(file.size/1048576).toFixed(1)+'MB':'-'}`,
+    `画素数: ${img.getWidth()}×${img.getHeight()}`,
+    `バンド数: ${fd.SamplesPerPixel||'?'} / ビット深度: ${fd.BitsPerSample?[...fd.BitsPerSample].join(','):'?'}`,
+    `圧縮: ${COMP[fd.Compression]||fd.Compression||'?'}`,
+    `色表現: ${fd.PhotometricInterpretation}${fd.ColorMap?'（ColorMapあり）':''}`,
+    `構造: ${fd.TileWidth?`タイル ${fd.TileWidth}×${fd.TileLength}`:`ストリップ ${fd.RowsPerStrip||'?'}行`}`,
+    (()=>{ const g=img.getGeoKeys()||{};
+      const MT={1:'投影座標',2:'経緯度',3:'地心直交'};
+      return `EPSG: ${g.ProjectedCSTypeGeoKey||'不明'}`
+        +` / 座標種別: ${MT[g.GTModelTypeGeoKey]||'不明'}`
+        +` / 地理系: ${g.GeographicTypeGeoKey||'不明'}`; })(),
+    tiffWarn?`備考: ${tiffWarn}`:''
+  ].filter(Boolean).join('\n');
+}
+/* ベース画像をブロック単位でデコードして縮小合成（メモリ使用を抑制） */
+async function buildBaseCanvas(img, iw, ih, w, h){
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+  const c2=cv.getContext('2d'); c2.imageSmoothingEnabled=true;
+  if(iw*ih<=6e6){
+    const rgb=await readRGBSafe(img);
+    c2.drawImage(rgbToCanvas(rgb,iw,ih),0,0,w,h);
+    return cv;
+  }
+  const fd=img.fileDirectory||{};
+  const tiled=!!fd.TileWidth;
+  const CW = tiled?2048:iw;
+  const CHh = tiled?2048:Math.max(64,Math.min(2048,Math.floor(8e6/iw)));
+  const cols=Math.ceil(iw/CW), rows=Math.ceil(ih/CHh);
+  const total=cols*rows; let done=0;
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      const x0=c*CW, y0=r*CHh, x1=Math.min(iw,x0+CW), y1=Math.min(ih,y0+CHh);
+      const rgb=await readRGBSafe(img,{window:[x0,y0,x1,y1]}, done?lastColorPath:null);
+      c2.drawImage(rgbToCanvas(rgb,x1-x0,y1-y0),
+        x0*w/iw, y0*h/ih, (x1-x0)*w/iw, (y1-y0)*h/ih);
+      done++;
+      if(done%3===0||done===total){
+        toast(`地図作成中… ${Math.round(done/total*100)}%`);
+        await new Promise(res=>setTimeout(res));
+      }
+    }
+  }
+  return cv;
+}
+
+/* ===== QGIS方式の表示: 表示範囲を現在の倍率に見合った解像度で都度読み直す ===== */
+function nativePPU(){ const t=state.tiff; return t ? t.iw/(t.bbox[2]-t.bbox[0]) : 1; }
+function basePPU(){   const t=state.tiff; return t ? t.baseW/(t.bbox[2]-t.bbox[0]) : 1; }
+let detTimer=null, detToken=0, detBusy=false;
+function scheduleDetail(){ clearTimeout(detTimer); detTimer=setTimeout(refreshDetail,180); }
+async function refreshDetail(){
+  const t=state.tiff; if(!t||!t.image||detBusy) return;
+  if(state.view.scale <= basePPU()*1.05){       // 縮小時はベースのみ（粗い表示で軽快）
+    if(state.detail){ state.detail=null; draw(); }
+    return;
+  }
+  const mx0=state.view.cx-(W/2)/state.view.scale, mx1=state.view.cx+(W/2)/state.view.scale;
+  const my0=state.view.cy-(H/2)/state.view.scale, my1=state.view.cy+(H/2)/state.view.scale;
+  const wantPPU=Math.min(state.view.scale*DPR, nativePPU());
+  const d=state.detail;
+  if(d && d.bbox[0]<=mx0 && d.bbox[1]<=my0 && d.bbox[2]>=mx1 && d.bbox[3]>=my1
+       && d.ppu>=wantPPU*0.95 && d.ppu<=wantPPU*2.5) return;
+  const mgx=(mx1-mx0)*0.25, mgy=(my1-my0)*0.25;
+  const rx0=Math.max(t.bbox[0],mx0-mgx), rx1=Math.min(t.bbox[2],mx1+mgx);
+  const ry0=Math.max(t.bbox[1],my0-mgy), ry1=Math.min(t.bbox[3],my1+mgy);
+  if(rx1<=rx0||ry1<=ry0) return;
+  const resX=(t.bbox[2]-t.bbox[0])/t.iw, resY=(t.bbox[3]-t.bbox[1])/t.ih;
+  const px0=Math.max(0,Math.floor((rx0-t.bbox[0])/resX));
+  const px1=Math.min(t.iw,Math.ceil((rx1-t.bbox[0])/resX));
+  const py0=Math.max(0,Math.floor((t.bbox[3]-ry1)/resY));
+  const py1=Math.min(t.ih,Math.ceil((t.bbox[3]-ry0)/resY));
+  const natW=px1-px0, natH=py1-py0;
+  if(natW<1||natH<1) return;
+  const bw=(px1-px0)*resX;
+  let ow=Math.round(Math.min(natW, Math.max(1, bw*wantPPU)));
+  let oh=Math.round(ow*natH/natW);
+  const MAXDIM=Math.min(4096, Math.max(1536, Math.round(Math.max(W,H)*DPR*1.8)));
+  const sc=Math.min(1, MAXDIM/ow, MAXDIM/oh);
+  ow=Math.max(1,Math.round(ow*sc)); oh=Math.max(1,Math.round(oh*sc));
+  const token=++detToken; detBusy=true;
+  try{
+    // 縮小指定つきの読込は形式によって色が失われることがあるため、
+    // 画素数が許せば原寸のまま読み、描画側で縮小する（色を確実に保持）
+    const noResample = natW*natH<=12e6;
+    const opts = noResample ? {window:[px0,py0,px1,py1]}
+                            : {window:[px0,py0,px1,py1], width:ow, height:oh};
+    const rgb=await readRGBSafe(t.image, opts, t.colorPath);
+    if(token!==detToken) return;
+    const bb=[t.bbox[0]+px0*resX, t.bbox[3]-py1*resY, t.bbox[0]+px1*resX, t.bbox[3]-py0*resY];
+    let cv;
+    if(noResample){
+      const full=rgbToCanvas(rgb,natW,natH);
+      if(natW<=MAXDIM && natH<=MAXDIM){ cv=full; }
+      else{
+        cv=document.createElement('canvas'); cv.width=ow; cv.height=oh;
+        const c2=cv.getContext('2d'); c2.imageSmoothingEnabled=true; c2.imageSmoothingQuality='high';
+        c2.drawImage(full,0,0,ow,oh);
+      }
+    } else { cv=rgbToCanvas(rgb,ow,oh); }
+    state.detail={canvas:cv, bbox:bb, ppu:cv.width/(bb[2]-bb[0])};
+    draw();
+  }catch(e){ /* 失敗時はベース表示のまま */ }
+  finally{
+    detBusy=false;
+    if(token!==detToken) scheduleDetail();
+  }
+}
+function drawScaleBar(){
+  if(state.geographic) return;
+  const targetPx=80; let m=targetPx/state.view.scale;
+  const pow=Math.pow(10,Math.floor(Math.log10(m)));
+  m = (m/pow>=5)?5*pow:(m/pow>=2)?2*pow:pow;
+  const ab=document.getElementById('actionbar');
+  const lift=(ab && ab.offsetParent!==null) ? ab.offsetHeight : 0;
+  const px=m*state.view.scale, x0=12, y0=H-14-lift;
+  ctx.strokeStyle='#333'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x0+px,y0);
+  ctx.moveTo(x0,y0-5); ctx.lineTo(x0,y0+2); ctx.moveTo(x0+px,y0-5); ctx.lineTo(x0+px,y0+2); ctx.stroke();
+  ctx.font='11px sans-serif'; ctx.fillStyle='#333'; ctx.textAlign='left';
+  ctx.fillText(m>=1000?(m/1000)+'km':m+'m', x0+4, y0-7);
+}
+
+
+/* ================= 拡大縮小 ================= */
+/* ================= 拡大縮小 ================= */
+function clampScale(s){
+  const t=state.tiff;
+  const hi=Math.max(250000, t?nativePPU()*50:0);
+  if(!t) return Math.min(Math.max(s, 1e-5), hi);
+  const fit=Math.min(W/(t.bbox[2]-t.bbox[0]), H/(t.bbox[3]-t.bbox[1]));
+  return Math.min(Math.max(s, fit/20), hi);
+}
+function zoomBy(f){
+  const before=state.view.scale;
+  state.view.scale=clampScale(state.view.scale*f);
+  if(state.view.scale===before){ toast(f>1?'これ以上拡大できません':'これ以上縮小できません'); return; }
+  draw();
+}
+let lastTapT=0, lastTapX=0, lastTapY=0;
+function handleDoubleTap(sx,sy){
+  const now=Date.now();
+  if(now-lastTapT<320 && Math.hypot(sx-lastTapX,sy-lastTapY)<30){
+    lastTapT=0;
+    const m=toMap(sx,sy);
+    state.view.scale=clampScale(state.view.scale*2);
+    state.view.cx=m[0]-(sx-W/2)/state.view.scale;
+    state.view.cy=m[1]+(sy-H/2)/state.view.scale;
+    state.follow=false; updateFollowBtn(); draw();
+    return true;
+  }
+  lastTapT=now; lastTapX=sx; lastTapY=sy;
+  return false;
+}
+function updateZoomLabel(){
+  const el=document.getElementById('zoomLevel');
+  if(!el) return;
+  if(!state.tiff||state.geographic){ el.textContent='－'; return; }
+  const mag=state.view.scale/nativePPU();
+  const mmPerPx=1000/state.view.scale;
+  el.innerHTML = `原寸×${mag<1?mag.toFixed(2):mag.toFixed(mag<10?1:0)}`
+    + `<br><span style="opacity:.65">1px≒${mmPerPx>=1000?(mmPerPx/1000).toFixed(1)+'m':mmPerPx.toFixed(mmPerPx<10?1:0)+'mm'}</span>`;
+}
+
+/* ================= 操作 ================= */
+/* ================= 操作 ================= */
+const pointers = new Map();
+let pinch=null, drawing=null, downInfo=null, erasing=false;
+canvas.addEventListener('pointerdown', e=>{
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId,{x:e.offsetX,y:e.offsetY});
+  downInfo={x:e.offsetX,y:e.offsetY,t:Date.now(),moved:false};
+  if(pointers.size===2){
+    if(drawing){ store.strokes.pop(); drawing=null; }
+    const pts=[...pointers.values()];
+    const cx=(pts[0].x+pts[1].x)/2, cy=(pts[0].y+pts[1].y)/2;
+    pinch={ dist:Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y),
+            scale:state.view.scale, mapC:toMap(cx,cy) };
+  } else if(pointers.size===1 && state.mode==='memo'){
+    if(state.eraser){ erasing=true; eraseAt(e.offsetX,e.offsetY); }
+    else{
+      const [x,y]=toMap(e.offsetX,e.offsetY);
+      drawing={color:state.memoColor, w:3/state.view.scale, pts:[[x,y]]};
+      store.strokes.push(drawing);
+    }
+  }
+});
+canvas.addEventListener('pointermove', e=>{
+  if(!pointers.has(e.pointerId)) return;
+  const prev=pointers.get(e.pointerId);
+  pointers.set(e.pointerId,{x:e.offsetX,y:e.offsetY});
+  if(downInfo && Math.hypot(e.offsetX-downInfo.x,e.offsetY-downInfo.y)>(e.pointerType==='touch'?14:8)) downInfo.moved=true;
+  if(pointers.size===2 && pinch){
+    const pts=[...pointers.values()];
+    const cx=(pts[0].x+pts[1].x)/2, cy=(pts[0].y+pts[1].y)/2;
+    const dd=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+    state.view.scale = clampScale(pinch.scale*dd/pinch.dist);
+    state.view.cx = pinch.mapC[0] - (cx-W/2)/state.view.scale;
+    state.view.cy = pinch.mapC[1] + (cy-H/2)/state.view.scale;
+    state.follow=false; updateFollowBtn(); draw();
+  } else if(pointers.size===1){
+    if(drawing){
+      const [x,y]=toMap(e.offsetX,e.offsetY);
+      drawing.pts.push([x,y]); draw();
+    } else if(erasing){ eraseAt(e.offsetX,e.offsetY); }
+    else {
+      const dx=e.offsetX-prev.x, dy=e.offsetY-prev.y;
+      if(dx||dy){ state.view.cx-=dx/state.view.scale; state.view.cy+=dy/state.view.scale;
+        state.follow=false; updateFollowBtn(); draw(); }
+    }
+  }
+});
+function endPointer(e){
+  pointers.delete(e.pointerId);
+  if(pointers.size<2) pinch=null;
+  if(drawing){ if(drawing.pts.length<2) store.strokes.pop(); else save(); drawing=null; draw(); }
+  if(erasing){ erasing=false; save(); }
+  if(downInfo && !downInfo.moved && Date.now()-downInfo.t<600 && pointers.size===0){
+    if(!handleDoubleTap(downInfo.x,downInfo.y)) onTap(downInfo.x,downInfo.y);
+  }
+  downInfo=null;
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const f = e.deltaY<0 ? 1.2 : 1/1.2;
+  const m = toMap(e.offsetX,e.offsetY);
+  state.view.scale = clampScale(state.view.scale*f);
+  state.view.cx = m[0]-(e.offsetX-W/2)/state.view.scale;
+  state.view.cy = m[1]+(e.offsetY-H/2)/state.view.scale;
+  draw();
+},{passive:false});
+
+function onTap(sx,sy){
+  if(state.mode==='rec'){
+    const p=nearestPoint(sx,sy,TOUCH_HIT_RADIUS,false);
+    if(p){ openRec(p.id); return; }
+    if(nearestRef(sx,sy,TOUCH_HIT_RADIUS)){ toast('基準点は復元の対象外です'); return; }
+    if(store.settings.mockGps){ const m=toMap(sx,sy); setMockGpsAt(m[0],m[1]); return; }
+    toast('境界点をタップしてください');
+    return;
+  }
+  if(state.mode==='line'){
+    const p=nearestPoint(sx,sy,TOUCH_HIT_RADIUS,true);
+    if(p){
+      const cr=state.currentRoute;
+      if(cr[cr.length-1]===p.id){ toast('同じ点が続いています'); return; }
+      cr.push(p.id);
+      updateActionbar(); draw();
+      return;
+    }
+    if(store.settings.mockGps){ const m=toMap(sx,sy); setMockGpsAt(m[0],m[1]); return; }
+    if(state.currentRoute.length===0){
+      const r=routeAt(sx,sy,14);
+      if(r) delRoute(r.id);
+    }
+    return;
+  }
+  if(store.settings.mockGps && state.mode!=='memo'){
+    const m=toMap(sx,sy); setMockGpsAt(m[0],m[1]);
+  }
+}
+/* 擬似GPS（手動現在地）の位置を動かす */
+function setMockGpsAt(x,y){
+  Object.assign(state.gps,{ok:true,acc:0.5,x,y});
+  if(!state.geographic){
+    try{ const ll=currentProj().inverse([x,y]); state.gps.lon=ll[0]; state.gps.lat=ll[1]; }catch(e){}
+  } else { state.gps.lon=x; state.gps.lat=y; }
+  updateGpsLabel(); draw();
+}
+/* いちばん近い境界点。withRef=true なら基準点も相手にする（計測用） */
+function nearestPoint(sx,sy,thr,withRef){
+  let best=null, bd=thr;
+  for(const p of store.points){
+    if(!isPointVisible(p)) continue;
+    const [x,y]=toScr(p.x,p.y);
+    if(!inView(x,y,thr)) continue;
+    const d=Math.hypot(x-sx,y-sy);
+    if(d<bd){ bd=d; best=p; }
+  }
+  if(withRef) for(const p of store.refPoints){
+    if(!isRefVisible(p)) continue;
+    const [x,y]=toScr(p.x,p.y);
+    if(!inView(x,y,thr)) continue;
+    const d=Math.hypot(x-sx,y-sy);
+    if(d<bd){ bd=d; best=p; }
+  }
+  return best;
+}
+function nearestRef(sx,sy,thr){
+  let best=null, bd=thr;
+  for(const p of store.refPoints){
+    if(!isRefVisible(p)) continue;
+    const [x,y]=toScr(p.x,p.y);
+    if(!inView(x,y,thr)) continue;
+    const d=Math.hypot(x-sx,y-sy);
+    if(d<bd){ bd=d; best=p; }
+  }
+  return best;
+}
+function routeAt(sx,sy,thr){
+  if(store.layers.route===false) return null;
+  const idx=ptIndex();
+  for(const r of store.routes){
+    const pts=(r.ptIds||[]).map(id=>idx.get(id)).filter(Boolean);
+    for(let i=0;i<pts.length-1;i++){
+      const a=toScr(pts[i].x,pts[i].y), b=toScr(pts[i+1].x,pts[i+1].y);
+      if(distToSeg(sx,sy,a,b)<thr) return r;
+    }
+  }
+  return null;
+}
+function distToSeg(px,py,a,b){
+  const dx=b[0]-a[0], dy=b[1]-a[1];
+  const len2=dx*dx+dy*dy;
+  if(!len2) return Math.hypot(px-a[0],py-a[1]);
+  let t=((px-a[0])*dx+(py-a[1])*dy)/len2;
+  t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(a[0]+t*dx), py-(a[1]+t*dy));
+}
+function eraseAt(sx,sy){
+  const thr=15; let removed=false;
+  store.strokes = store.strokes.filter(s=>{
+    for(const pt of s.pts){
+      const [x,y]=toScr(pt[0],pt[1]);
+      if(Math.hypot(x-sx,y-sy)<thr){ removed=true; return false; }
+    }
+    return true;
+  });
+  if(removed) draw();
+}
+
+/* ================= GPS ================= */
+const gpsInfo=document.getElementById('gpsInfo');
+function updateGpsLabel(){
+  if(!state.gps.ok) return;
+  const acc=state.gps.acc;
+  const cls = acc<=10?'acc-good':'acc-bad';
+  const head = store.settings.mockGps ? '手動位置' : 'GPS精度';
+  gpsInfo.innerHTML=`${head}: <span class="${cls}">±${acc.toFixed(1)}m</span><br>`
+    +`X:${state.geographic?state.gps.lat.toFixed(6):state.gps.y.toFixed(1)} `
+    +`Y:${state.geographic?state.gps.lon.toFixed(6):state.gps.x.toFixed(1)}`;
+}
+function toggleMock(){
+  store.settings.mockGps=!store.settings.mockGps;
+  save(); updateMockLabel(); updateActionbar();
+  if(store.settings.mockGps){
+    gpsInfo.innerHTML='手動位置: 地図をタップ';
+    toast('擬似GPS: 地図をタップした位置を現在地として扱います');
+  } else {
+    state.gps.ok=false; gpsInfo.textContent='GPS: 待機中'; startGps();
+  }
+  draw();
+}
+function updateMockLabel(){
+  const el=document.getElementById('mockLabel');
+  if(el) el.textContent = store.settings.mockGps
+    ? 'デバッグ: 現在地を手動設定【ON】' : 'デバッグ: 現在地を手動設定';
+  const dl=document.getElementById('mockDateLabel');
+  if(dl) dl.textContent = store.settings.mockDate
+    ? `デバッグ: 日付を変更【${dateLabel(store.settings.mockDate).replace('（本日）','')}】`
+    : 'デバッグ: 日付を変更';
+  const badge=document.getElementById('dateBadge');
+  if(badge){
+    badge.style.display = store.settings.mockDate?'inline':'none';
+    badge.textContent = store.settings.mockDate ? `日付=${store.settings.mockDate}` : '';
+  }
+}
+function openMockDate(){
+    document.getElementById('mockDateInput').value = store.settings.mockDate || realTodayStr();
+  document.getElementById('mockDateNow').textContent =
+    `実際の日付: ${realTodayStr()}／現在の扱い: ${todayStr()}`
+    + (store.settings.mockDate?'（デバッグ指定中）':'');
+  openPanel('mockDatePanel');
+}
+function applyMockDate(){
+  const v=document.getElementById('mockDateInput').value;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(v)){ toast('日付を選択してください'); return; }
+  store.settings.mockDate = (v===realTodayStr()) ? null : v;
+  save(); closePanel('mockDatePanel');
+  updateMockLabel(); updateListCount(); updateActionbar(); draw();
+  toast(store.settings.mockDate?`作業日を ${v} として扱います`:'実際の日付に戻しました');
+}
+function clearMockDate(){
+  store.settings.mockDate=null;
+  save(); closePanel('mockDatePanel');
+  updateMockLabel(); updateListCount(); updateActionbar(); draw();
+  toast(`実際の日付（${realTodayStr()}）に戻しました`);
+}
+let gpsErrShown=false;
+function startGps(){
+  if(store.settings.mockGps){ gpsInfo.innerHTML='手動位置: 地図をタップ'; return; }
+  if(!navigator.geolocation){ gpsInfo.textContent='GPS: 非対応'; return; }
+  navigator.geolocation.watchPosition(pos=>{
+    if(store.settings.mockGps) return;
+    const {latitude:lat, longitude:lon, accuracy:acc}=pos.coords;
+    let x,y;
+    try{ [x,y]=gpsToMap(lon,lat); }catch(e){ return; }
+    const first=!state.gps.ok;
+    Object.assign(state.gps,{ok:true,lat,lon,acc,x,y});
+    updateGpsLabel();
+    if(state.follow||(first&&!state.tiff&&!state.viewRestored&&!store.points.length)){
+      state.view.cx=x; state.view.cy=y;
+    }
+    if(first && !state.tiff && !state.viewRestored && !store.points.length && state.view.scale<=1.0001)
+      state.view.scale=clampScale(3);
+    if(first) checkZone(lon, lat);
+    draw();
+  }, err=>{
+    /* ヘッダーは1行に収める。詳しい案内は1度だけトーストで出す */
+    gpsInfo.textContent = 'GPS: '+(err.code===1?'許可なし':'取得失敗');
+    if(!gpsErrShown){
+      gpsErrShown = true;
+      setTimeout(()=>toast(err.code===1
+        ? '位置情報が許可されていません（PCでは「確認」タブの擬似GPSが使えます）'
+        : '位置情報を取得できませんでした'), 900);
+    }
+  }, {enableHighAccuracy:true, maximumAge:1000, timeout:20000});
+}
+document.getElementById('followBtn').addEventListener('click',()=>{
+  state.follow=!state.follow; updateFollowBtn();
+  if(state.follow && state.gps.ok){ state.view.cx=state.gps.x; state.view.cy=state.gps.y; draw(); }
+});
+function updateFollowBtn(){ document.getElementById('followBtn').classList.toggle('on',state.follow); }
+
+/* ================= ファイル選択 ================= */
+(function setupPickers(){
+  const ua=navigator.userAgent;
+  const isApple = /iPad|iPhone|iPod/.test(ua) ||
+                  (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1) ||
+                  /Macintosh/.test(ua);
+  const t=document.getElementById('fileTiff'), j=document.getElementById('fileJson');
+  if(isApple){
+    t.setAttribute('accept','.tif,.tiff,application/octet-stream');
+    j.setAttribute('accept','.json,application/json');
+  } else {
+    t.removeAttribute('accept');   // Androidは全ファイル表示
+    j.removeAttribute('accept');
+  }
+})();
+async function isTiff(file){
+  try{
+    const b=new Uint8Array(await file.slice(0,4).arrayBuffer());
+    if(b.length<4) return false;
+    const le = b[0]===0x49&&b[1]===0x49&&b[2]===0x2A&&b[3]===0x00;
+    const be = b[0]===0x4D&&b[1]===0x4D&&b[2]===0x00&&b[3]===0x2A;
+    const bigLe = b[0]===0x49&&b[1]===0x49&&b[2]===0x2B&&b[3]===0x00;
+    const bigBe = b[0]===0x4D&&b[1]===0x4D&&b[2]===0x00&&b[3]===0x2B;
+    return le||be||bigLe||bigBe;
+  }catch(err){ return null; }
+}
+let lastImg=null, lastFile=null;
+document.getElementById('fileTiff').addEventListener('change', async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  e.target.value='';
+  if(tiffList().length>=TIFF_MAX){
+    alert(`図面は同時に${TIFF_MAX}枚までです。\n「準備」タブの［図面管理］から、いらない図面を削除してから読み込んでください。`);
+    return;
+  }
+  toast(`${file.name} を確認中…`);
+  if(file.size===0){
+    alert('ファイルを読み取れませんでした（サイズ0）。\nクラウド上のファイルの場合は、端末にダウンロードしてから選択してください。');
+    return;
+  }
+  const ok=await isTiff(file);
+  if(ok===null){
+    alert('ファイルを読み取れませんでした。\nOneDrive等のクラウド上のファイルは、端末にダウンロードしてから選択してください。');
+    return;
+  }
+  if(!ok){
+    alert(`TIFFファイルではないようです。\n選択: ${file.name}（${(file.size/1048576).toFixed(1)}MB）\n拡張子 .tif / .tiff のファイルを選択してください。`);
+    return;
+  }
+  toast('TIFF解析中…');
+  tiffWarn=''; tiffNotes.clear(); lastImg=null; lastFile=file;
+  try{
+    const tiff = await GeoTIFF.fromBlob(file);   // 全体をメモリに載せない
+    const img = await tiff.getImage();
+    lastImg=img;
+    let bbox;
+    try{ bbox = img.getBoundingBox(); }
+    catch(err){ alert('位置情報（座標）が含まれていないTIFFです。\n\n'+tiffDiagText(file,img)); return; }
+    const gk = img.getGeoKeys()||{};
+    const det = detectProjection(gk, bbox);
+    // 2枚目以降は、1枚目と同じ座標系のものだけ重ねられる（違う系を重ねると数十kmずれるため）
+    if(tiffList().length){
+      const z0 = epsgToZone(state.epsg), z1 = epsgToZone(det.epsg);
+      if((state.epsg||0) !== (det.epsg||0) || z0 !== z1){
+        alert('座標系が、いま読み込んでいる図面と違います。\n\n'
+          + `読込済み: ${state.epsg?('EPSG:'+state.epsg):'不明'}${z0?`（${z0}系）`:''}\n`
+          + `この図面: ${det.epsg?('EPSG:'+det.epsg):'不明'}${z1?`（${z1}系）`:''}\n\n`
+          + '違う系の図面を重ねると数十kmずれるため、読み込みません。\n'
+          + '［図面管理］で読込済みの図面を削除してから読み込んでください。');
+        return;
+      }
+    }
+    state.epsg = det.epsg;
+    state.geographic = det.geographic;
+    if(det.warn) note(det.warn);
+    const iw=img.getWidth(), ih=img.getHeight();
+    const fd0=img.fileDirectory||{};
+    if(!fd0.TileWidth && (fd0.RowsPerStrip||ih)>=ih && iw*ih>50e6){
+      if(!confirm('このTIFFは分割読込できない構造（単一ストリップ）のため、タブレットではメモリ不足になる可能性があります。続行しますか?\n※GDALでのCOG形式変換を推奨します')) return;
+    }
+    const MAX=12e6; let w=iw,h=ih;
+    if(iw*ih>MAX){ const f=Math.sqrt(MAX/(iw*ih)); w=Math.round(iw*f); h=Math.round(ih*f); }
+    // 縮小版（オーバービュー）を利用。ただしマスク層・色構成違いは除外
+    const m0=fd0;
+    let src=img, sw=iw, sh=ih;
+    try{
+      const cnt=await tiff.getImageCount();
+      for(let i=1;i<cnt;i++){
+        const im=await tiff.getImage(i);
+        const fd=im.fileDirectory||{};
+        const isMask=((fd.NewSubfileType||0)&4)!==0 || fd.SubfileType===4;
+        const sameColor=(fd.SamplesPerPixel||1)===(m0.SamplesPerPixel||1)
+          && fd.PhotometricInterpretation===m0.PhotometricInterpretation
+          && ((fd.BitsPerSample&&fd.BitsPerSample[0])||8)===((m0.BitsPerSample&&m0.BitsPerSample[0])||8);
+        if(isMask||!sameColor) continue;
+        const a=im.getWidth()*im.getHeight();
+        if(a>=w*h && a<sw*sh){ src=im; sw=im.getWidth(); sh=im.getHeight(); }
+      }
+    }catch(err){}
+    toast('地図作成中… 0%');
+    lastColorPath=null;
+    const cv = await buildBaseCanvas(src, sw, sh, w, h);
+    let colorPath=lastColorPath;
+    if(src!==img){   // ベースが縮小版なら主画像でも同じ経路が使えるか確認
+      try{ await readRGBSafe(img,{window:[0,0,Math.min(8,iw),Math.min(8,ih)]}, colorPath);
+           colorPath=lastColorPath; }catch(e){ colorPath='raw'; }
+    }
+    state.tiffs.push({ id:uid(), name:file.name, canvas:cv, bbox, image:img,
+                       iw, ih, baseW:w, colorPath, epsg:state.epsg,
+                       geographic:state.geographic, visible:true });
+    syncTiffTop();
+    state.detail=null; detToken++;
+    state.view.cx=(bbox[0]+bbox[2])/2; state.view.cy=(bbox[1]+bbox[3])/2;
+    state.view.scale=clampScale(Math.min(W/(bbox[2]-bbox[0]), H/(bbox[3]-bbox[1]))*0.95);
+    state.follow=false; updateFollowBtn();
+    const zi = epsgToZone(state.epsg);
+    const colorKind = (fd0.ColorMap&&fd0.ColorMap.length>=3) ? 'パレットカラー'
+      : (fd0.SamplesPerPixel||1)>=3 ? 'カラー(RGB)' : '単バンド(白黒)';
+    // 読み込んだ図面の情報はリボンの「図面読込」の下に短く出し、詳細はトーストで知らせる
+    state.tiffInfo = `${file.name}（EPSG:${state.epsg||'不明'}`
+      +`${zi?` / ${zi}系`:state.geographic?' / 経緯度':state.epsg?'':` → 設定の${store.settings.zone}系を使用`}`
+      +` / ${colorKind}${tiffWarn?' ※変換あり':''}）`;
+    state.tiffs[state.tiffs.length-1].info = state.tiffInfo;
+    state.tiffs[state.tiffs.length-1].kind = colorKind;
+    if(state.gps.ok){ const [x,y]=gpsToMap(state.gps.lon,state.gps.lat); state.gps.x=x; state.gps.y=y; }
+    draw();
+    renderRibbon();
+    toast((tiffWarn?'読込完了（変換あり）: ':'読込完了: ')+state.tiffInfo);
+  }catch(err){
+    console.error(err);
+    alert('読込に失敗しました。\n\nエラー: '+(err&&err.message||err)
+      +'\n\n'+(lastImg?tiffDiagText(file,lastImg):`ファイル: ${file.name}\nサイズ: ${(file.size/1048576).toFixed(1)}MB`)
+      +'\n\n※対処: GDALで変換すると多くの場合解決します\ngdal_translate -of COG -ot Byte -expand rgb 入力.tif 出力.tif');
+  }
+});
+function showTiffInfo(){
+    if(!lastImg){ alert('まだ図面を読み込んでいません。'); return; }
+  alert('TIFF情報\n\n'+(state.tiffInfo?state.tiffInfo+'\n\n':'')+tiffDiagText(lastFile,lastImg));
+}
+
+/* ================= 背景地図（地理院タイル・年代別空中写真つき） =================
+   出典: 地理院タイル（国土地理院） https://maps.gsi.go.jp/development/ichiran.html
+   年代別の空中写真は、年代によって作られている拡大段階（ズーム）の上限が違う。
+   上限を超えて拡大したときは画面右上で知らせる（同じ画像を引き伸ばした表示になるため）。 */
+const GSI_TILES = {
+  std:   { name:'標準地図',   url:'https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',           min:2,  max:18 },
+  pale:  { name:'淡色地図',   url:'https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',          min:2,  max:18 },
+  photo: { name:'空中写真（最新）',      url:'https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg', min:2,  max:18 },
+  ort:   { name:'空中写真 2007年〜',     url:'https://cyberjapandata.gsi.go.jp/xyz/ort/{z}/{x}/{y}.jpg',           min:14, max:18 },
+  gazo4: { name:'空中写真 1987〜1990年', url:'https://cyberjapandata.gsi.go.jp/xyz/gazo4/{z}/{x}/{y}.jpg',         min:10, max:17 },
+  gazo3: { name:'空中写真 1984〜1986年', url:'https://cyberjapandata.gsi.go.jp/xyz/gazo3/{z}/{x}/{y}.jpg',         min:10, max:17 },
+  gazo2: { name:'空中写真 1979〜1983年', url:'https://cyberjapandata.gsi.go.jp/xyz/gazo2/{z}/{x}/{y}.jpg',         min:10, max:17 },
+  gazo1: { name:'空中写真 1974〜1978年', url:'https://cyberjapandata.gsi.go.jp/xyz/gazo1/{z}/{x}/{y}.jpg',         min:10, max:17 },
+  ort_old10:{ name:'空中写真 1961〜1969年',        url:'https://cyberjapandata.gsi.go.jp/xyz/ort_old10/{z}/{x}/{y}.png', min:10, max:17 },
+  ort_USA10:{ name:'空中写真 1945〜1950年（米軍）', url:'https://cyberjapandata.gsi.go.jp/xyz/ort_USA10/{z}/{x}/{y}.png', min:10, max:17 },
+  blank: { name:'なし', url:null, min:0, max:0 },
+};
+Object.keys(GSI_TILES).forEach(k=>{ GSI_TILES[k].id = k; });
+const GSI_CREDIT = '地理院タイル（国土地理院）';
+const D2R = Math.PI/180, R2D = 180/Math.PI;
+const TILE_PX = 256, TILE_MEM_MAX = 600, TILE_FETCH_MAX = 6;
+/* 端末内に控える地図の上限。超えたら古いものから捨てる。
+   無制限に増やすと、iPhoneなどで容量が足りなくなったときに
+   ブラウザがサイトごとデータを消し、点や路線まで巻き添えになるため。 */
+const TILE_MAX_BYTES = 250 * 1024 * 1024;      // 250MB
+const TILE_MAX_COUNT = 6000;                   // 枚数
+let tilePutCount = 0, tileQuotaWarned = false;
+
+/* 図面（GeoTIFF）の不透明度。0.10〜1.00。地理院タイルの上に重ねるためのもの */
+function tiffAlpha(){
+  const a = +store.settings.tiffAlpha;
+  return (isFinite(a) && a>=0.1 && a<=1) ? a : 1;
+}
+function setTiffAlpha(v){
+  const a = Math.min(1, Math.max(0.1, (+v)/100));
+  store.settings.tiffAlpha = Math.round(a*100)/100;
+  save(); draw(); renderRibbon();
+  const el=document.getElementById('tiffAlphaVal');
+  if(el) el.textContent = Math.round(store.settings.tiffAlpha*100)+'%';
+}
+function baseMapId(){ return GSI_TILES[store.settings.baseMap] ? store.settings.baseMap : 'std'; }
+function baseMapDef(){ return GSI_TILES[baseMapId()]; }
+
+function llToTile(lon, lat, z){
+  const n = Math.pow(2, z);
+  const s = Math.min(0.9999, Math.max(-0.9999, Math.sin(lat*D2R)));
+  return [ (lon+180)/360*n, (0.5 - Math.log((1+s)/(1-s))/(4*Math.PI))*n ];
+}
+function tileToLL(tx, ty, z){
+  const n = Math.pow(2, z);
+  return [ tx/n*360-180, Math.atan(Math.sinh(Math.PI*(1-2*ty/n)))*R2D ];
+}
+
+/* ---- タイルの取得（メモリ → 端末内の控え → 通信） ---- */
+const tileMem = new Map();          // key -> ImageBitmap|Image / 'loading' / 'error'
+let tileFetching = 0;
+/* 通信が続けて失敗するときは少し休む（圏外で無駄な要求を出し続けない） */
+let tileFailRun = 0, tilePauseUntil = 0;
+const tileWait = [];
+let tileRedraw = null;
+function tileKey(id,z,x,y){ return `${id}/${z}/${x}/${y}`; }
+function tileUrl(def,z,x,y){ return def.url.replace('{z}',z).replace('{x}',x).replace('{y}',y); }
+function tileTouch(k, v){
+  tileMem.delete(k); tileMem.set(k, v);
+  while(tileMem.size > TILE_MEM_MAX){
+    const old = tileMem.keys().next().value;
+    const img = tileMem.get(old);
+    if(img && img.close) try{ img.close(); }catch(e){}
+    tileMem.delete(old);
+  }
+}
+function tileNeedsRedraw(){
+  if(tileRedraw) return;
+  tileRedraw = setTimeout(()=>{ tileRedraw=null; draw(); }, 60);
+}
+async function tileDecode(blob){
+  if(self.createImageBitmap) return await createImageBitmap(blob);
+  return await new Promise((res,rej)=>{
+    const u=URL.createObjectURL(blob), im=new Image();
+    im.onload=()=>{ res(im); };
+    im.onerror=rej; im.src=u;
+  });
+}
+function tileGet(def, z, x, y){
+  const k = tileKey(def.id, z, x, y);
+  const v = tileMem.get(k);
+  if(v === 'loading' || v === 'error') return null;
+  if(v){ return v; }
+  tileMem.set(k, 'loading');
+  tileLoad(def, z, x, y, k).then(img=>{
+    if(img){ tileTouch(k, img); tileNeedsRedraw(); }
+    else tileMem.set(k, 'error');
+  });
+  return null;
+}
+async function tileLoad(def, z, x, y, k){
+  try{
+    const rec = await idbGet('tiles', k);            // 端末内の控え
+    if(rec) return await tileDecode(rec);
+  }catch(e){}
+  if(!navigator.onLine || Date.now() < tilePauseUntil) return null;
+  return await tileFetch(def, z, x, y, k);
+}
+function tileFetch(def, z, x, y, k){
+  return new Promise(resolve=>{
+    const run = async ()=>{
+      tileFetching++;
+      try{
+        const res = await fetch(tileUrl(def,z,x,y), {mode:'cors', cache:'default'});
+        tileFailRun = 0;                             // サーバまでは届いた
+        if(!res.ok){ resolve(null); return; }        // その段に地図が無いだけ（404など）
+        const blob = await res.blob();
+        tileStore(k, blob);                          // 圏外用に控える
+        resolve(await tileDecode(blob));
+      }catch(e){
+        // 通信そのものが失敗したときだけ少し休む（圏外での空振りを減らす）
+        if(++tileFailRun >= 8) tilePauseUntil = Date.now() + 30000;
+        resolve(null);
+      }
+      finally{
+        tileFetching--;
+        const next = tileWait.shift();
+        if(next) next();
+      }
+    };
+    if(tileFetching < TILE_FETCH_MAX) run(); else tileWait.push(run);
+  });
+}
+
+/* ---- 表示 ---- */
+function tileZoomFor(latC){
+  const mpp = 1/state.view.scale;                    // 1ピクセルあたりの距離(m)
+  const res0 = 156543.03392804097 * Math.cos(latC*D2R);
+  return Math.round(Math.log2(res0/mpp));
+}
+function drawBaseMap(){
+  const def = baseMapDef();
+  if(!def.url || store.layers.map===false) return;
+  if(self.__noTiles) return;                       // 自動テスト用（通信を伴わない検査）
+  let pr; try{ pr = currentProj(); }catch(e){ return; }
+  // 画面四隅を経緯度へ
+  const ll = [[0,0],[W,0],[0,H],[W,H]].map(([sx,sy])=>{
+    const m = toMap(sx,sy);
+    try{ return pr.inverse([m[0], m[1]]); }catch(e){ return null; }
+  });
+  if(ll.some(a=>!a || !isFinite(a[0]) || !isFinite(a[1]))) return;
+  const lons = ll.map(a=>a[0]), lats = ll.map(a=>a[1]);
+  if(Math.max(...lats) > 85 || Math.min(...lats) < -85) return;
+  const latC = (Math.min(...lats)+Math.max(...lats))/2;
+  const z = Math.max(def.min, Math.min(def.max, tileZoomFor(latC)));
+  const n = Math.pow(2, z);
+  const a0 = llToTile(Math.min(...lons), Math.max(...lats), z);
+  const a1 = llToTile(Math.max(...lons), Math.min(...lats), z);
+  const X0 = Math.floor(a0[0]), X1 = Math.floor(a1[0]);
+  const Y0 = Math.floor(a0[1]), Y1 = Math.floor(a1[1]);
+  if((X1-X0+1)*(Y1-Y0+1) > 400) return;              // 想定外に広い場合は描かない
+  state.tileZ = z; state.tileWant = 0; state.tileHave = 0;
+  const P = (tx,ty)=>{ const c = tileToLL(tx,ty,z); const m = pr.forward([c[0],c[1]]); return toScr(m[0],m[1]); };
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  for(let X=X0; X<=X1; X++) for(let Y=Y0; Y<=Y1; Y++){
+    if(X<0 || Y<0 || X>=n || Y>=n) continue;
+    state.tileWant++;
+    const img = tileGet(def, z, X, Y);
+    if(!img) continue;
+    state.tileHave++;
+    const nw = P(X,Y), ne = P(X+1,Y), sw = P(X,Y+1);
+    const ax = (ne[0]-nw[0])/TILE_PX, ay = (ne[1]-nw[1])/TILE_PX;
+    const bx = (sw[0]-nw[0])/TILE_PX, by = (sw[1]-nw[1])/TILE_PX;
+    if(!isFinite(ax) || !isFinite(by)) continue;
+    ctx.save();
+    ctx.transform(ax, ay, bx, by, nw[0], nw[1]);
+    // 継ぎ目が出ないよう気持ち大きめに貼る
+    ctx.drawImage(img, 0, 0, TILE_PX, TILE_PX, 0, 0, TILE_PX+0.6, TILE_PX+0.6);
+    ctx.restore();
+  }
+}
+/* 出典表示の位置。右の操作ボタン列と下の大ボタンを避ける（隠れると出典違反になる） */
+function creditBox(){
+  ctx.font = '12px system-ui, sans-serif';
+  const w = ctx.measureText(GSI_CREDIT).width + 8;
+  const ab = document.getElementById('actionbar');
+  const lift = (ab && ab.offsetParent!==null) ? ab.offsetHeight : 0;
+  const h = 18, x = (W - 62) - w, y = H - 3 - lift - h;
+  return { x, y, w, h };
+}
+function drawCredit(){
+  if(!baseMapDef().url) return;
+  const r = creditBox();
+  ctx.font = '12px system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.82)';
+  ctx.fillRect(r.x, r.y, r.w, r.h);
+  ctx.fillStyle = '#333'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(GSI_CREDIT, r.x+4, r.y + r.h/2);
+}
+/* 最後に見ていた場所を覚えて、次に開いたときそこから始める */
+let lastViewSaved='';
+function rememberView(){
+  if(state.tiff) return;
+  const v={ cx:+state.view.cx.toFixed(2), cy:+state.view.cy.toFixed(2),
+            scale:+state.view.scale.toFixed(4), zone:store.settings.zone };
+  const j=JSON.stringify(v);
+  if(j===lastViewSaved) return;
+  lastViewSaved=j; store.settings.lastView=v; save();
+}
+function restoreView(){
+  const v=store.settings.lastView;
+  if(!v || state.tiff) return false;
+  if(v.zone && v.zone!==store.settings.zone) return false;   // 系が違うと意味が変わる
+  if(!isFinite(v.cx)||!isFinite(v.cy)||!isFinite(v.scale)) return false;
+  state.view.cx=v.cx; state.view.cy=v.cy; state.view.scale=clampScale(v.scale);
+  lastViewSaved=JSON.stringify(v);
+  return true;
+}
+function setBaseMap(id){
+  if(!GSI_TILES[id]) return;
+  store.settings.baseMap = id;
+  store.layers.map = true;
+  save(); draw(); renderRibbon();
+  toast(`背景地図を「${GSI_TILES[id].name}」にしました`);
+}
+
+/* ---- 圏外用にこの範囲を控える ---- */
+async function cacheViewTiles(){
+  const def = baseMapDef();
+  if(!def.url){ alert('背景地図が「なし」です。'); return; }
+  if(!navigator.onLine){ alert('圏外です。電波のある場所で実行してください。'); return; }
+  let pr; try{ pr = currentProj(); }catch(e){ alert('座標系が設定されていません。'); return; }
+  const ll = [[0,0],[W,0],[0,H],[W,H]].map(([sx,sy])=>{ const m=toMap(sx,sy); return pr.inverse([m[0],m[1]]); });
+  const lons = ll.map(a=>a[0]), lats = ll.map(a=>a[1]);
+  const latC = (Math.min(...lats)+Math.max(...lats))/2;
+  const z0 = Math.max(def.min, Math.min(def.max, tileZoomFor(latC)));
+  const zs = [];
+  for(let z=Math.max(def.min,z0-1); z<=Math.min(def.max,z0+2); z++) zs.push(z);
+  const list = [];
+  for(const z of zs){
+    const n = Math.pow(2,z);
+    const a0 = llToTile(Math.min(...lons), Math.max(...lats), z);
+    const a1 = llToTile(Math.max(...lons), Math.min(...lats), z);
+    for(let X=Math.floor(a0[0]); X<=Math.floor(a1[0]); X++)
+      for(let Y=Math.floor(a0[1]); Y<=Math.floor(a1[1]); Y++)
+        if(X>=0 && Y>=0 && X<n && Y<n) list.push([z,X,Y]);
+  }
+  if(!list.length){ alert('保存する範囲がありません。'); return; }
+  if(list.length > 1500){ alert(`範囲が広すぎます（${list.length}枚）。拡大してからやり直してください。`); return; }
+  const estMB = (list.length * 45 / 1024).toFixed(0);      // 1枚おおよそ45KB
+  const estMin = Math.max(1, Math.round(list.length / 90));  // 1枚あたり0.6〜0.7秒の見込み
+  if(!confirm(`いま見えている範囲を、圏外でも見られるように保存します。\n\n`
+    + `タイル: ${list.length}枚（ズーム ${zs[0]}〜${zs[zs.length-1]}）\n`
+    + `容量の目安: 約${estMB}MB\n`
+    + `かかる時間の目安: 約${estMin}分（電波の状態によります）\n\n`
+    + `途中で［中止］できます。始めますか?`)) return;
+  const job = startJob('地図を保存', list.length);
+  let done=0, got=0, bytes=0;
+  const t0 = Date.now();
+  for(const [z,X,Y] of list){
+    if(job.cancel) break;
+    const k = tileKey(def.id,z,X,Y);
+    let have=false;
+    try{ have = !!(await idbGet('tiles',k)); }catch(e){}
+    if(!have){
+      const img = await tileFetch(def,z,X,Y,k);
+      if(img){ got++; if(img.close) try{img.close();}catch(e){} }
+    } else got++;
+    done++;
+    if(done%5===0 || done===list.length){
+      const sec = (Date.now()-t0)/1000;
+      const rest = done ? Math.round(sec/done*(list.length-done)) : 0;
+      updateJob(done, `地図を保存中… ${done} / ${list.length}枚`
+        + (rest>2 ? `（残り約${rest<60?rest+'秒':Math.round(rest/60)+'分'}）` : ''));
+      await new Promise(r=>setTimeout(r,0));     // 画面を描き替える隙をつくる
+    }
+  }
+  const cancelled = job.cancel;
+  endJob();
+  await trimTileCache();
+  toast(cancelled
+    ? `中止しました（${got}枚まで保存済み。その分は圏外でも表示できます）`
+    : `地図を保存しました（${got} / ${list.length}枚）。この範囲は圏外でも表示できます。`);
+  draw();
+}
+/* 控えを1枚しまう。上限を超えたら古いものから捨てる */
+function tileStore(key, blob){
+  idbPut('tiles', blob, key)
+    .then(()=> idbPut('tilemeta', { t: Date.now(), n: blob.size }, key))
+    .then(()=>{ if(++tilePutCount % 25 === 0) trimTileCache(); })
+    .catch(err=>{
+      // 容量不足など。放置すると端末のデータごと消される恐れがあるので知らせる
+      if(!tileQuotaWarned){
+        tileQuotaWarned = true;
+        trimTileCache(true);
+        showAlert('地図の控えを保存できませんでした（端末の空き容量不足の可能性）。'
+          + '「確認」タブの［保存状態］で使用量を確認し、［地図控え削除］をお試しください。',
+          [{label:'保存状態', fn:'hideAlert();showStorageInfo()'},{label:'閉じる', fn:'hideAlert()'}]);
+      }
+    });
+}
+/* 控えの合計枚数とバイト数 */
+async function tileCacheInfo(){
+  try{
+    const keys = await idbReq('tilemeta','readonly',s=>s.getAllKeys());
+    const vals = await idbReq('tilemeta','readonly',s=>s.getAll());
+    let bytes = 0;
+    for(const v of vals) bytes += (v && v.n) || 0;
+    return { count: keys.length, bytes, keys, vals };
+  }catch(e){ return { count:0, bytes:0, keys:[], vals:[] }; }
+}
+let trimBusy = false;
+async function trimTileCache(force){
+  if(trimBusy) return 0;
+  trimBusy = true;
+  try{
+    const info = await tileCacheInfo();
+    const overCount = Math.max(0, info.count - TILE_MAX_COUNT);
+    let bytes = info.bytes;
+    if(!force && overCount<=0 && bytes<=TILE_MAX_BYTES) return 0;
+    // 古い順に、上限の8割まで落とす
+    const rows = info.keys.map((k,i)=>({ k, t:(info.vals[i]&&info.vals[i].t)||0,
+                                             n:(info.vals[i]&&info.vals[i].n)||0 }))
+                          .sort((a,b)=>a.t-b.t);
+    const targetBytes = TILE_MAX_BYTES * 0.8, targetCount = TILE_MAX_COUNT * 0.8;
+    const del = [];
+    let count = info.count;
+    for(const r of rows){
+      if(bytes<=targetBytes && count<=targetCount && !force) break;
+      if(force && del.length>=200) break;
+      del.push(r.k); bytes -= r.n; count--;
+      if(force && bytes<=targetBytes && count<=targetCount) break;
+    }
+    if(del.length){
+      await idbReq('tiles','readwrite',s=>{ del.forEach(k=>s.delete(k)); });
+      await idbReq('tilemeta','readwrite',s=>{ del.forEach(k=>s.delete(k)); });
+      del.forEach(k=>tileMem.delete(k));
+    }
+    return del.length;
+  }catch(e){ return 0; }
+  finally{ trimBusy = false; }
+}
+async function clearTileCache(){
+  const info = await tileCacheInfo();
+  if(!info.count){ toast('保存している地図はありません'); return; }
+  if(!confirm(`【削除するもの】端末内に控えている地図タイル ${info.count}枚（約${(info.bytes/1048576).toFixed(0)}MB）\n`
+    + `【残るもの】点・路線・メモ・工数などの作業データはすべて残ります\n`
+    + `【元に戻せるか】取消では戻せません（電波のある場所で開けば取り直せます）\n\n`
+    + `削除しますか?`)) return;
+  try{ await idbReq('tiles','readwrite',s=>s.clear()); }catch(e){}
+  try{ await idbReq('tilemeta','readwrite',s=>s.clear()); }catch(e){}
+  tileMem.clear(); tileQuotaWarned = false;
+  toast(`地図の控え ${info.count}枚 を削除しました`);
+  draw();
+}
+
+/* ================= 計測線（2点以上を選んで距離をはかる） ================= */
+const RT_UNDO_MAX = 20;
+const rtUndo=[], rtRedo=[];
+/* 点そのものが入れ替わる操作（取込の削除・合流・復元・全削除）のあとは、
+   取消の履歴が古い世界を指しているので全部捨てる。 */
+function clearUndoStacks(){
+  recUndo.length=0; recRedo.length=0;
+  rtUndo.length=0;  rtRedo.length=0;
+}
+function pushRtUndo(){
+  rtUndo.push(JSON.stringify(store.routes));
+  if(rtUndo.length>RT_UNDO_MAX) rtUndo.shift();
+  rtRedo.length=0;
+}
+function undoRoute(){
+  if(!rtUndo.length){ toast('取り消せる計測の操作はありません'); return; }
+  rtRedo.push(JSON.stringify(store.routes));
+  store.routes = JSON.parse(rtUndo.pop());
+  save(); draw(); updateActionbar(); refreshEdits();
+  toast('計測の操作を取り消しました');
+}
+function redoRoute(){
+  if(!rtRedo.length){ toast('やり直せる計測の操作はありません'); return; }
+  rtUndo.push(JSON.stringify(store.routes));
+  store.routes = JSON.parse(rtRedo.pop());
+  save(); draw(); updateActionbar(); refreshEdits();
+  toast('計測の操作をやり直しました');
+}
+function routeLength(ids){
+  const idx=ptIndex();
+  let d=0;
+  for(let i=0;i<ids.length-1;i++){
+    const a=idx.get(ids[i]), b=idx.get(ids[i+1]);
+    if(a&&b) d+=distBetween(a,b);
+  }
+  return d;
+}
+function routeLabel(r){
+  const idx=ptIndex();
+  return (r.ptIds||[]).map(id=>{ const p=idx.get(id); return p?p.name:'?'; }).join('－');
+}
+function undoRoutePt(){ state.currentRoute.pop(); updateActionbar(); draw(); }
+function cancelRoute(){ state.currentRoute=[]; updateActionbar(); draw(); }
+function commitRoute(){
+  if(state.currentRoute.length<2){ toast('2点以上タップしてください'); return; }
+  pushRtUndo();
+  const rt={ id:uid(), ptIds:[...state.currentRoute], date:todayStr(), ts:Date.now() };
+  store.routes.push(rt);
+  state.currentRoute=[];
+  store.layers.route=true; store.layers.dist=true;
+  save(); updateActionbar(); draw(); refreshEdits();
+  toast(`${rt.ptIds.length}点の計測線を引きました（${fmtDist(routeLength(rt.ptIds))}m）`);
+}
+function delRoute(id){
+  const r=store.routes.find(x=>x.id===id);
+  if(!r) return;
+  if(!confirm(`この計測線を削除しますか?\n\n${routeLabel(r)}\n${fmtDist(routeLength(r.ptIds))}m\n\n点は残ります。［取消］で戻せます。`)) return;
+  pushRtUndo();
+  store.routes=store.routes.filter(x=>x.id!==id);
+  save(); draw(); updateActionbar(); refreshEdits();
+  toast('計測線を削除しました（［取消］で戻せます）');
+}
+function clearRoutes(){
+  const n=store.routes.length;
+  if(!n){ toast('計測線はありません'); return; }
+  if(!confirm(`【削除するもの】計測線 ${n}本すべて\n【残るもの】点・画地の線・記録はすべて残ります\n【元に戻せるか】［取消］で戻せます\n\n削除しますか?`)) return;
+  pushRtUndo();
+  store.routes=[]; state.currentRoute=[];
+  save(); draw(); updateActionbar(); refreshEdits();
+  toast(`計測線 ${n}本 を削除しました（［取消］で戻せます）`);
+}
+function setMemoColor(c){ state.memoColor=c; state.eraser=false; updateActionbar(); }
+function toggleEraser(){ state.eraser=!state.eraser; updateActionbar(); }
+function undoStroke(){ store.strokes.pop(); save(); draw(); }
+function clearStrokes(){
+  if(!store.strokes.length){ toast('手書きメモはありません'); return; }
+  if(!confirm(`【消すもの】手書きメモ ${store.strokes.length}本すべて\n【残るもの】点・線・記録は残ります\n【元に戻せるか】戻せません（自動控えからなら戻せます）\n\n消去しますか?`)) return;
+  store.strokes=[]; save(); draw(); refreshEdits();
+  toast('手書きメモを全て消去しました');
+}
+
+/* ================= リボン ================= */
+const RIBBON = [
+  { id:'prep',  label:'準備', icon:'🗺', mode:'view', groups:[
+      { label:'背景地図', sel:'basemap' },
+      { label:'取込', items:[
+          {ic:'📥', t:'境界点取込', fn:"pickImport('bp')",  sub:'bpCount'},
+          {ic:'📗', t:'基準点取込', fn:"pickImport('ref')", sub:'refCount'} ]},
+      { label:'図面', items:[
+          {ic:'🗺', t:'図面読込', fn:"pickTiff()", sub:'tiffShort'},
+          {ic:'🗂', t:'図面管理', fn:"openTiffs()", sub:'tiffCount'} ]},
+      { label:'表示', items:[
+          {ic:'🗂', t:'レイヤ', fn:"openLayers()", sub:'layer'} ]},
+      { label:'設定', items:[
+          {ic:'⚙',  t:'各種設定', fn:"openSettings()", sub:'worker'},
+          {ic:'🪧', t:'杭種編集', fn:"openStakes()", sub:'stakeN'} ]},
+      { label:'ヘルプ', items:[
+          {ic:'❓', t:'使い方', fn:"openPanel('helpPanel')"} ]},
+    ]},
+  { id:'rec',  label:'復元', icon:'🪧', mode:'rec', groups:[
+      { label:'杭種', sel:'stake' },
+      { label:'点の一覧', items:[
+          {ic:'📋', t:'点一覧', fn:"openList('pt')", sub:'prog'} ]},
+      { label:'点の設定', items:[
+          {ic:'🎨', t:'点の表示', fn:"openDispPt()"} ]},
+    ]},
+  { id:'meas', label:'計測', icon:'📐', mode:'line', groups:[
+      { label:'距離', items:[
+          {ic:'📏', t:'距離レイヤ', fn:"toggleLayer('dist')", on:'dist', sub:'distOn'} ]},
+      { label:'線の一覧', items:[
+          {ic:'📋', t:'計測線一覧', fn:"openList('rt')", sub:'rtCount'} ]},
+      { label:'線の設定', items:[
+          {ic:'🎨', t:'線の表示', fn:"openDispLine()"},
+          {ic:'🗑', t:'計測線全削除', fn:"clearRoutes()", dis:'noRoute', danger:true} ]},
+    ]},
+  { id:'memo', label:'メモ', icon:'✏️', mode:'memo', groups:[
+      { label:'ペン', items:[
+          {ic:'🔴', t:'赤', fn:"setMemoColor('#d9261c')", on:'c#d9261c'},
+          {ic:'🔵', t:'青', fn:"setMemoColor('#1e73d2')", on:'c#1e73d2'},
+          {ic:'⚫', t:'黒', fn:"setMemoColor('#111111')", on:'c#111111'} ]},
+      { label:'消去', items:[
+          {ic:'🧽', t:'消しゴム', fn:"toggleEraser()", on:'eraser'},
+          {ic:'↩',  t:'1本戻す', fn:"undoStroke()"},
+          {ic:'🗑', t:'メモ全消去', fn:"clearStrokes()", danger:true} ]},
+    ]},
+  { id:'check', label:'確認', icon:'🔍', mode:'view', groups:[
+      { label:'表示', items:[
+          {ic:'🗂', t:'レイヤ', fn:"openLayers()", sub:'layer'},
+          {ic:'📋', t:'一覧',   fn:"openList('all')", sub:'listCount'} ]},
+      { label:'データ', items:[
+          {ic:'🛡', t:'保存状態', fn:"showStorageInfo()"},
+          {ic:'🕘', t:'自動控え', fn:"openSnapshots()"} ]},
+      { label:'点検', items:[
+          {ic:'🔍', t:'TIFF情報', fn:"showTiffInfo()"},
+          {ic:'🖱', t:'擬似GPS',  fn:"toggleMock()", on:'mock'},
+          {ic:'🗓', t:'擬似日付', fn:"openMockDate()", on:'mockDate'} ]},
+    ]},
+  { id:'data', label:'データ', icon:'💾', mode:'view', groups:[
+      { label:'控え', items:[
+          {ic:'📤', t:'保存', fn:"exportJson()", sub:'backup'},
+          {ic:'📥', t:'控えを読む', fn:"pickMerge()"},
+          {ic:'🗑', t:'全データ削除', fn:"clearAll()", danger:true} ]},
+    ]},
+];
+const MODE_LABEL={view:'閲覧',rec:'復元',line:'計測',memo:'メモ'};
+let ribbonTab='prep', ribbonOpen=true;
+function tabDef(id){ return RIBBON.find(t=>t.id===id) || RIBBON[0]; }
+function setTab(id, toggle){
+  const t=tabDef(id);
+  if(ribbonTab===id){
+    if(toggle){ ribbonOpen=!ribbonOpen; renderRibbon(); resize(); }
+    return;
+  }
+  if(!setMode(t.mode, id)) return;
+  ribbonTab=id; ribbonOpen=true;
+  closeAllPanels();
+  renderRibbon(); resize();
+}
+function setMode(m, forTab){
+  if(state.mode==='line' && m!=='line' && state.currentRoute.length){
+    if(!confirm('選んでいる途中の計測は破棄されます。よろしいですか?')) return false;
+    state.currentRoute=[];
+  }
+  state.mode=m;
+  const el=document.getElementById('modeLabel');
+  if(el) el.textContent = forTab ? tabDef(forTab).label : MODE_LABEL[m];
+  updateActionbar(); draw(); updateWakeLock();
+  return true;
+}
+function ribbonState(){
+  const c=progCounts();
+  const le=store.settings.lastExport, dz=daysSince(le);
+  const bp=store.imports.filter(i=>i.kind!=='ref').length;
+  const rf=store.imports.filter(i=>i.kind==='ref').length;
+  return {
+    dis: { noRoute: !store.routes.length,
+           noRecUndo: !recUndo.length, noRecRedo: !recRedo.length,
+           noRtUndo: !rtUndo.length, noRtRedo: !rtRedo.length },
+    on:  { eraser: state.eraser, mock: !!store.settings.mockGps,
+           mockDate: !!store.settings.mockDate,
+           dist: store.layers.dist!==false,
+           'c#d9261c': !state.eraser && state.memoColor==='#d9261c',
+           'c#1e73d2': !state.eraser && state.memoColor==='#1e73d2',
+           'c#111111': !state.eraser && state.memoColor==='#111111' },
+    badge:{ route: state.currentRoute.length || '' },
+    sub: {
+      bpCount: c.all ? `${c.all}点/${bp}件` : '未取込',
+      refCount: store.refPoints.length ? `${store.refPoints.length}点/${rf}件` : '未取込',
+      tiffCount: tiffList().length ? tiffList().length+'枚' : '未読込',
+      tiffShort: state.tiff
+        ? (epsgToZone(state.epsg) ? epsgToZone(state.epsg)+'系' : (state.geographic ? '経緯度' : store.settings.zone+'系'))
+        : '未読込',
+      worker: store.settings.worker || '未設定',
+      stakeN: `${stakeList().length}種`,
+      prog: c.all ? `${c.done}/${c.all}点` : '0点',
+      rtCount: store.routes.length + '本',
+      distOn: store.layers.dist!==false ? '表示' : '非表示',
+      layer: `${store.lines.length}画地/${store.imports.length}件`,
+      listCount: `${c.all}点/${store.lines.length}画地`,
+      backup: !c.all ? '' : (!le ? '未保存' : (dz<=0 ? '本日' : dz + '日前')),
+    },
+    warn: { worker: !store.settings.worker,
+            backup: c.done>0 && daysSince(le)>=7 },
+  };
+}
+function renderRibbon(){
+  const tabs=document.getElementById('ribbonTabs');
+  tabs.innerHTML = RIBBON.map(t=>
+    `<button type="button" role="tab" aria-selected="${t.id===ribbonTab}"
+       class="${t.id===ribbonTab?'active':''}" onclick="setTab('${t.id}',true)">
+       <span class="tic" aria-hidden="true">${t.icon}</span>${t.label}</button>`).join('');
+  const cmd=document.getElementById('ribbonCmd');
+  cmd.classList.toggle('hide', !ribbonOpen);
+  if(!ribbonOpen){ cmd.innerHTML=''; return; }
+  const st=ribbonState();
+  cmd.innerHTML = tabDef(ribbonTab).groups.map(g=>{
+    let inner;
+    if(g.sel==='stake'){
+      const opts=stakeList().map(x=>
+        `<option value="${esc(x)}" ${x===currentStake()?'selected':''}>${esc(x)}</option>`).join('');
+      inner=`<div class="rsel"><span>使用中</span>
+        <select onchange="setStake(this.value)">${opts}</select></div>`;
+    } else if(g.sel==='basemap'){
+      const cur=baseMapId();
+      const opts=Object.keys(GSI_TILES).map(k=>
+        `<option value="${k}" ${k===cur?'selected':''}>${GSI_TILES[k].name}</option>`).join('');
+      inner=`<div class="rsel"><span>国土地理院</span>
+        <select onchange="setBaseMap(this.value)">${opts}</select></div>`;
+    } else {
+      inner=g.items.map(i=>{
+        const dis=i.dis && st.dis[i.dis];
+        const on =i.on  && st.on[i.on];
+        const sub=i.sub ? st.sub[i.sub] : '';
+        const bd =i.badge ? st.badge[i.badge] : '';
+        const wrn=i.sub && st.warn[i.sub];
+        return `<button type="button" class="rbtn${on?' on':''}${i.danger?' danger':''}"
+          onclick="${i.fn}" ${dis?'disabled':''}>
+          <span class="ic">${i.ic}</span>${i.t}
+          ${sub?`<span style="font-size:var(--fsGl);color:${wrn?'#b3261e':'#7a8694'}">${esc(sub)}</span>`:''}
+          ${bd?`<span class="rbadge">${bd}</span>`:''}</button>`;
+      }).join('');
+    }
+    return `<div class="rgroup"><div class="rrow">${inner}</div>
+            <div class="glabel">${g.label}</div></div>`;
+  }).join('');
+  cmd.scrollLeft=0;
+  updateRibbonEdges();
+  applyA11y(cmd); applyA11y(tabs);
+}
+function updateRibbonEdges(){
+  const cmd=document.getElementById('ribbonCmd');
+  const L=document.getElementById('redgeL'), R=document.getElementById('redgeR');
+  if(!cmd||!L||!R) return;
+  const more=cmd.scrollWidth-cmd.clientWidth;
+  L.classList.toggle('on', ribbonOpen && cmd.scrollLeft>4);
+  R.classList.toggle('on', ribbonOpen && more>4 && cmd.scrollLeft<more-4);
+}
+document.addEventListener('DOMContentLoaded', ()=>{
+  const cmd=document.getElementById('ribbonCmd');
+  if(cmd) cmd.addEventListener('scroll', updateRibbonEdges, {passive:true});
+});
+window.addEventListener('resize', ()=>setTimeout(updateRibbonEdges,60));
+function pickTiff(){ document.getElementById('fileTiff').click(); }
+function pickMerge(){ document.getElementById('fileMerge').click(); }
+function sideBtn(ic,label,fn,disabled){
+  return `<button type="button" class="sidebtn${disabled?' off':''}" ${disabled?'disabled':''}
+    onclick="${fn}" aria-label="${label}" title="${label}">
+    <span class="si">${ic}</span><span class="sl">${label}</span></button>`;
+}
+function updateActionbar(){
+  const bar=document.getElementById('actionbar');
+  if(!bar) return;
+  const st=ribbonState();
+  if(state.mode==='rec'){
+    const c=progCounts();
+    bar.innerHTML=`<div class="rowwrap">
+      ${sideBtn('↩','取消','undoRec()',st.dis.noRecUndo)}
+      <div id="stakeBar">${c.all?`点をタップして記録（打設 ${c.da}／既設 ${c.ki}／未 ${c.no}）`
+                                 :'「準備」タブの［境界点取込］から読み込んでください'}</div>
+      ${sideBtn('↪','やり直し','redoRec()',st.dis.noRecRedo)}</div>`;
+  } else if(state.mode==='line'){
+    const n=state.currentRoute.length;
+    bar.innerHTML = n
+      ? `<div class="rowwrap">
+          ${sideBtn('←','戻る','undoRoutePt()',false)}
+          <button type="button" class="bigbtn ok" onclick="commitRoute()">✓ ${n}点で確定${n>=2?`（${fmtDist(routeLength(state.currentRoute))}m）`:''}</button>
+          ${sideBtn('✕','中止','cancelRoute()',false)}</div>`
+      : `<div class="rowwrap">
+          ${sideBtn('↩','取消','undoRoute()',st.dis.noRtUndo)}
+          <div id="stakeBar">点をタップして距離をはかります</div>
+          ${sideBtn('↪','やり直し','redoRoute()',st.dis.noRtRedo)}</div>`;
+  } else bar.innerHTML='';
+  if(document.getElementById('ribbonCmd')) renderRibbon();
+}
+/* 画面読み上げ・キーボード操作のための補助。
+   入力欄に名前を付け、パネルをダイアログとして扱えるようにする。
+   動的に作る画面もあるので、描き替えのたびに呼ぶ。 */
+function applyA11y(root){
+  const scope = root || document;
+  scope.querySelectorAll('button:not([type])').forEach(b=>b.setAttribute('type','button'));
+  scope.querySelectorAll('input,select,textarea').forEach(el=>{
+    if(el.getAttribute('aria-label')) return;
+    if(el.id && document.querySelector(`label[for="${el.id}"]`)) return;
+    let t = '';
+    const row = el.closest('.formRow');
+    if(row){ const lb = row.querySelector('label'); if(lb) t = lb.textContent.trim(); }
+    if(!t){ const rs = el.closest('.rsel'); if(rs){ const sp = rs.querySelector('span'); if(sp) t = sp.textContent.trim(); } }
+    if(!t) t = el.placeholder || el.title || '';
+    if(t) el.setAttribute('aria-label', t);
+  });
+  scope.querySelectorAll('.panel .sheet').forEach(sh=>{
+    sh.setAttribute('role','dialog');
+    sh.setAttribute('aria-modal','true');
+    const h = sh.querySelector('h2');
+    if(h && !sh.getAttribute('aria-label')){
+      sh.setAttribute('aria-label', h.textContent.replace(/[✕×]/g,'').trim());
+    }
+  });
+}
+
+/* ================= 杭種の設定 ================= */
+function openStakes(){
+  document.getElementById('stakeEdit').innerHTML = stakeList().map((s,i)=>
+    `<div class="listRow">
+      <input value="${esc(s)}" onchange="editStake(${i},this.value)" style="flex:1;" placeholder="杭種名">
+      <button type="button" class="del" onclick="delStake(${i})">削除</button></div>`).join('');
+  openPanel('stakePanel');
+}
+function editStake(i,v){
+  const list=stakeList();
+  if(!list[i]) return;
+  const old=list[i]; v=String(v||'').trim();
+  if(!v){ toast('杭種名は空にできません'); openStakes(); return; }
+  list[i]=v;
+  if(store.settings.stake===old) store.settings.stake=v;
+  save(); openStakes(); updateActionbar();
+}
+function addStake(){ stakeList().push('新しい杭種'); save(); openStakes(); }
+function delStake(i){
+  const list=stakeList();
+  if(list.length<=1){ toast('これ以上削除できません'); return; }
+  const s=list[i];
+  if(!confirm(`「${s}」を一覧から削除しますか?\n（記録済みの点の杭種はそのまま残ります）`)) return;
+  list.splice(i,1);
+  if(store.settings.stake===s) store.settings.stake=list[0];
+  save(); openStakes(); updateActionbar();
+}
+function resetStakes(){
+  if(!confirm('杭種の一覧を初期値に戻しますか?')) return;
+  store.settings.stakes=DEFAULT_STAKES.slice();
+  store.settings.stake=DEFAULT_STAKES[0];
+  save(); openStakes(); updateActionbar();
+}
+
+/* ================= レイヤ表示 ================= */
+function openLayers(){
+  document.getElementById('layerNow').innerHTML = layerNowText();
+  const rows=[
+    ['pt',   '境界点', progCounts().all+'点'],
+    ['line', '画地の線', store.lines.length+'画地'],
+    ['route','計測線', store.routes.length+'本'],
+    ['dist', '距離', store.layers.dist!==false?`辺が${Math.max(10,+store.settings.thinDist||40)}px以上のとき`:'—'],
+    ['ref',  '基準点', store.refPoints.length+'点'],
+    ['memo', '手書きメモ', store.strokes.length+'本'],
+    ['base', '図面（GeoTIFF）', tiffList().length?tiffList().length+'枚':'未読込'],
+    ['map',  '背景地図（地理院）', baseMapDef().name]
+  ];
+  const alpha=Math.round(tiffAlpha()*100);
+  document.getElementById('otherLayers').innerHTML = rows.map(([k,lb,info])=>{
+    const on=store.layers[k]!==false;
+    let row=`<div class="listRow">
+      <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
+        onclick="toggleLayer('${k}')">${on?'表示':'非表示'}</button>
+      <span style="flex:1">${lb}</span><span class="coords">${esc(info)}</span></div>`;
+    if(k==='map'){
+      row+=`<div class="listRow" style="padding-top:0;">
+        <span style="min-width:52px;"></span>
+        <button type="button" class="del" style="flex:1;background:#e7f0fb;color:#1e3a5f;"
+          onclick="closePanel('layerPanel');cacheViewTiles()">この範囲を圏外用に控える</button>
+        <button type="button" class="del" style="flex:1;"
+          onclick="closePanel('layerPanel');clearTileCache()">控えを削除</button></div>`;
+    }
+    if(k==='base'){
+      row+=`<div class="listRow" style="padding-top:0;">
+        <span style="min-width:52px;"></span>
+        <span style="flex:1;font-size:13px;color:#666c74;">透過率
+          <span id="tiffAlphaVal" style="color:#1e3a5f;font-weight:bold;">${alpha}%</span></span>
+        <input id="tiffAlpha" type="range" min="10" max="100" step="5" value="${alpha}"
+          ${tiffList().length?'':'disabled'} style="flex:1.6;"
+          oninput="document.getElementById('tiffAlphaVal').textContent=this.value+'%'"
+          onchange="setTiffAlpha(this.value)"></div>`;
+    }
+    return row;
+  }).join('');
+  const c=progCounts();
+  const sts=[['stDa','打設',c.da,disp('stDaColor')],['stKi','既設',c.ki,disp('stKiColor')],['stNone','未',c.no,disp('stNoColor')]];
+  document.getElementById('stateLayers').innerHTML = sts.map(([k,lb,n,col])=>{
+    const on=store.layers[k]!==false;
+    return `<div class="listRow">
+      <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
+        onclick="toggleLayer('${k}')">${on?'表示':'非表示'}</button>
+      <span class="swatch" style="background:${col}"></span>
+      <span style="flex:1">${lb}</span><span class="coords">${n}点</span></div>`;
+  }).join('');
+  document.getElementById('importLayers').innerHTML = store.imports.length ? store.imports.map(imp=>{
+    const on=isImportVisible(imp.id);
+    const n = imp.kind==='ref' ? refPointsOf(imp.id).length : pointsOf(imp.id).length;
+    const ln= linesOf(imp.id).length;
+    return `<div class="listRow">
+      <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
+        onclick="toggleImportLayer('${imp.id}')">${on?'表示':'非表示'}</button>
+      <span class="stChip ${imp.kind==='ref'?'no':'da'}" style="${imp.kind==='ref'?`background:${REF_STROKE};`:''}">${imp.kind==='ref'?'基準点':'境界点'}</span>
+      <span style="flex:1">${esc(imp.name)}</span>
+      <span class="coords">${n}点${ln?`<br>${ln}画地`:''}</span>
+      <button type="button" class="del" onclick="fitToImport('${imp.id}')" title="表示範囲へ移動">⤢</button>
+      <button type="button" class="del" onclick="delImport('${imp.id}')">削除</button></div>`;
+  }).join('') : '<p style="color:#888;font-size:14px;">まだ取り込んでいません（「準備」タブの［境界点取込］から）</p>';
+  openPanel('layerPanel');
+}
+function toggleLayer(k){
+  store.layers[k]=store.layers[k]===false;
+  save(); draw(); renderRibbon();
+  if(panelOpen('layerPanel')) openLayers();
+  else toast(`${layerName(k)}を${store.layers[k]?'表示':'非表示'}にしました`);
+}
+function layerName(k){
+  return {pt:'境界点',line:'画地の線',route:'計測線',dist:'距離',ref:'基準点',
+          memo:'手書きメモ',base:'図面',map:'背景地図',
+          stDa:'打設',stKi:'既設',stNone:'未'}[k]||k;
+}
+function toggleImportLayer(id){
+  const h=store.layers.hiddenImports||(store.layers.hiddenImports=[]);
+  const i=h.indexOf(id);
+  if(i>=0) h.splice(i,1); else h.push(id);
+  save(); openLayers(); draw();
+}
+function showAllLayers(){
+  store.layers.hiddenImports=[];
+  ['pt','ref','line','route','dist','memo','base','map','stNone','stDa','stKi']
+    .forEach(k=>store.layers[k]=true);
+  save(); openLayers(); draw(); renderRibbon();
+  toast('すべて表示にしました');
+}
+function layerNowText(){
+  const kinds=['pt','ref','line','route','dist','memo','base','map'];
+  const off=kinds.filter(k=>store.layers[k]===false).length + (store.layers.hiddenImports||[]).length;
+  const stOff=['stDa','stKi','stNone'].filter(k=>store.layers[k]===false).map(layerName);
+  return `種類: <b>${off?`${off}種類が非表示`:'すべて'}</b>　／　状態: <b>${stOff.length?`${stOff.join('・')}を非表示`:'すべて'}</b>`;
+}
+
+/* ================= 記録画面（点をタップしたとき） ================= */
+let recPickId=null, recPickKind=null, recPickStake=null;
+function openRec(id){
+  const p=ptById(id);
+  if(!p || p.ref){ toast('点が見つかりません'); return; }
+  recPickId=id;
+  recPickKind = stOf(p)==='no' ? null : stOf(p);
+  recPickStake = recStake(p) || currentStake();
+  renderRec(); openPanel('recPanel');
+}
+function recPickSetStake(v){
+  recPickStake=v;
+  store.settings.stake=v;          // 次にタップした点にも引き継ぐ
+  save(); updateActionbar();
+}
+function renderRec(){
+  const p=ptById(recPickId);
+  if(!p){ closePanel('recPanel'); recPickId=null; return; }
+  const [X,Y]=pointToXY(p);
+  const cur=stOf(p);
+  const plot=plotNameOf(p);
+  document.getElementById('recTitle').textContent = p.name;
+  /* 杭種を先に選び、［打設］［既設］を押した時点で記録して閉じる。
+     現場では何百点も入れるので、押す回数を「点 → 打設」の2回で済ませる。 */
+  document.getElementById('recBody').innerHTML = `
+    <p style="font-size:12.5px;color:#666c74;margin:0 0 10px;">
+      <span class="stChip ${cur}">${ST_NAME[cur]}</span>
+      ${plot?`　画地: ${esc(plot)}`:''}<br>
+      X:${X.toFixed(3)}　Y:${Y.toFixed(3)}
+      ${cur!=='no'?`<br>記録: ${dateLabel(recDate(p))}${recWorker(p)?`　${esc(recWorker(p))}`:''}${recStake(p)?`　${esc(recStake(p))}`:''}`:''}</p>
+    <div class="formRow"><label>杭種</label>
+      <select onchange="recPickSetStake(this.value)">
+        ${stakeList().map(s=>`<option value="${esc(s)}" ${s===recPickStake?'selected':''}>${esc(s)}</option>`).join('')}
+      </select></div>
+    <p style="font-size:12.5px;color:#888;margin:-4px 0 10px;">${cur==='no'?'下のボタンを押すと<b>その場で記録して閉じます</b>。':'押し直すと<b>記録を上書き</b>します。'}杭種は次にタップした点にも引き継がれます。</p>
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button type="button" class="recBtn da${cur==='da'?' sel':''}" onclick="recCommit('da')">打設<br>
+        <span style="font-weight:normal;font-size:12px;">現地に無く復元した</span></button>
+      <button type="button" class="recBtn ki${cur==='ki'?' sel':''}" onclick="recCommit('ki')">既設<br>
+        <span style="font-weight:normal;font-size:12px;">現地に杭があった</span></button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${cur!=='no'?`<button type="button" class="saveBtn" style="margin:0;background:#fdecea;color:#8c1d18;"
+        onclick="recCancel()">この点の記録を取り消す</button>`:''}
+      <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;"
+        onclick="closePanel('recPanel')">閉じる</button>
+    </div>
+    <p style="font-size:12.5px;color:#888;margin:10px 0 0;">間違えたら大ボタンの左の<b>［取消］</b>で戻せます。</p>`;
+  applyA11y(document.getElementById('recPanel'));
+}
+function recCommit(k){
+  const kind = k || recPickKind;
+  if(kind!=='da' && kind!=='ki'){ toast('［打設］か［既設］を押してください'); return; }
+  recPickKind = kind;
+  const id=recPickId;
+  store.settings.stake = recPickStake || currentStake();
+  setRec(id, kind, store.settings.stake);
+  closePanel('recPanel');
+}
+function recCancel(){
+  const id=recPickId;
+  const p=ptById(id);
+  if(!p) return;
+  if(!confirm(`${p.name} の記録を取り消しますか?\n\n${ST_NAME[stOf(p)]}　${dateLabel(recDate(p))}`
+    + `${recWorker(p)?`\n記録者: ${recWorker(p)}`:''}`)) return;
+  clearRec(id);
+  closePanel('recPanel');
+}
+/* 一覧・記録画面のうち開いている方だけを描き替える */
+function refreshEdits(){
+  if(panelOpen('listPanel')) openList();
+  if(panelOpen('recPanel')) renderRec();
+  if(panelOpen('layerPanel')) openLayers();
+}
+
+/* ================= 一覧 ================= */
+let ptSearch='', ptSort='name', ptGroup='st', ptLimit=200;
+let ptOpen=new Set();
+const PT_PAGE=200;
+let listKind='all';
+function setPtSearch(v){ ptSearch=String(v||''); ptLimit=PT_PAGE;
+  const el=document.getElementById('ptSearch'); if(el && el.value!==ptSearch) el.value=ptSearch;
+  openList(); }
+function setPtSort(v){ ptSort=v; ptLimit=PT_PAGE; openList(); }
+function setPtGroup(v){ ptGroup=v; ptLimit=PT_PAGE; ptOpen=new Set(); openList(); }
+function ptShowMore(){ ptLimit+=PT_PAGE; openList(); }
+/* まとまりの見出しは、キーの文字（点名・杭種・ファイル名に由来）を onclick に埋めると
+   ' や " が入ったときに壊れて開けなくなる。並び順の番号で受け渡す。 */
+let ptGroupKeysNow=[];
+function togglePtGroup(k){ if(ptOpen.has(k)) ptOpen.delete(k); else ptOpen.add(k); openList(); }
+function togglePtGroupAt(i){
+  const k=ptGroupKeysNow[i];
+  if(k!==undefined) togglePtGroup(k);
+}
+function ptGroupIsOpen(k){ return ptSearch.trim() ? true : ptOpen.has(k); }
+function ptOpenAll(){ ptOpen=new Set(store.points.filter(ptMatch).map(ptGroupKey)); openList(); }
+function ptCloseAll(){ ptOpen=new Set(); openList(); }
+function ptMatch(p){
+  const q=ptSearch.trim().toLowerCase();
+  if(!q) return true;
+  return String(p.name||'').toLowerCase().includes(q)
+      || String(recStake(p)).toLowerCase().includes(q)
+      || String(recWorker(p)).toLowerCase().includes(q)
+      || String(plotNameOf(p)).toLowerCase().includes(q)
+      || ST_NAME[stOf(p)].includes(q);
+}
+function ptGroupKey(p){
+  if(ptGroup==='plot')  return plotNameOf(p) || '画地なし';
+  if(ptGroup==='stake') return recStake(p) || '未記録';
+  if(ptGroup==='date')  return recDate(p) || '未記録';
+  if(ptGroup==='imp'){ const i=importById(p.impId); return i?i.name:'—'; }
+  if(ptGroup==='none')  return '';
+  return ST_NAME[stOf(p)];
+}
+function ptGroupLabel(k){
+  if(ptGroup==='date') return k==='未記録' ? '未記録' : dateLabel(k);
+  return k;
+}
+function ptSorted(list){
+  const a=list.slice();
+  if(ptSort==='name')      a.sort((x,y)=>String(x.name).localeCompare(String(y.name),'ja',{numeric:true}));
+  else if(ptSort==='nameDesc') a.sort((x,y)=>String(y.name).localeCompare(String(x.name),'ja',{numeric:true}));
+  else if(ptSort==='recNew')   a.sort((x,y)=>((y.rec&&y.rec.t)||0)-((x.rec&&x.rec.t)||0));
+  else a.sort((x,y)=>(x.idx||0)-(y.idx||0));
+  return a;
+}
+function openList(kind){
+  if(kind) listKind=kind;
+  const show=(id,on)=>{ const e=document.getElementById(id); if(e) e.style.display=on?'block':'none'; };
+  show('secPt',  listKind!=='rt');
+  show('secRt',  listKind==='all' || listKind==='rt');
+  show('secOther', listKind==='all');
+  const ttl=document.getElementById('listTitle');
+  if(ttl) ttl.textContent = listKind==='pt' ? '境界点一覧' : listKind==='rt' ? '計測線一覧' : '一覧';
+  const sel=(id,v)=>{ const e=document.getElementById(id); if(e) e.value=v; };
+  sel('ptSort',ptSort); sel('ptGroup',ptGroup);
+  const se=document.getElementById('ptSearch'); if(se && se.value!==ptSearch) se.value=ptSearch;
+
+  const c=progCounts();
+  const pi=document.getElementById('progInfo');
+  if(pi) pi.innerHTML = c.all
+    ? `<b>${c.all}点中 ${c.done}点を記録しました</b>（${c.all?Math.round(c.done/c.all*100):0}%）<br>`
+      + `<span class="stChip da">打設 ${c.da}</span> <span class="stChip ki">既設 ${c.ki}</span> <span class="stChip no">未 ${c.no}</span>`
+    : '境界点を取り込んでいません（「準備」タブの［境界点取込］から）';
+
+  const hit=ptSorted(store.points.filter(ptMatch));
+  const grouped = ptGroup!=='none';
+  const shown = grouped ? hit : hit.slice(0, ptLimit);
+  const info=document.getElementById('ptListInfo');
+  if(info) info.textContent = `${store.points.length}点中 ${hit.length}点`
+    + (grouped ? 'をまとめて表示' : 'を表示')
+    + (!grouped && hit.length>shown.length ? `（先頭${shown.length}点）` : '')
+    + (ptSearch.trim()?`　検索: 「${ptSearch.trim()}」`:'');
+  const more=document.getElementById('ptMoreBox');
+  if(more) more.style.display = (!grouped && hit.length>shown.length) ? 'block' : 'none';
+
+  const row = p=>{
+    const [X,Y]=pointToXY(p);
+    const k=stOf(p), plot=plotNameOf(p);
+    return `<div class="listRow">
+      <span class="swatch" style="background:${k==='no'?'#fff':stColor(k)};border-color:${stColor(k)};"></span>
+      <span style="flex:1;min-width:0;">
+        <b>${esc(p.name)}</b> <span class="stChip ${k}">${ST_NAME[k]}</span>
+        <span class="coords" style="display:block;">X:${X.toFixed(3)}　Y:${Y.toFixed(3)}</span>
+        ${plot?`<span class="coords" style="display:block;">${esc(plot)}</span>`:''}
+        ${k!=='no'?`<span class="coords" style="display:block;">${dateLabel(recDate(p))}　${esc(recStake(p))}${recWorker(p)?`　${esc(recWorker(p))}`:''}</span>`:''}</span>
+      <button type="button" class="del" style="background:#eef2f7;color:#1e3a5f;min-width:52px;"
+        onclick="closePanel('listPanel');fitToPoint('${p.id}')" title="この点へ移動">⤢</button>
+      <button type="button" class="del" style="background:#eef2f7;color:#1e3a5f;min-width:52px;"
+        onclick="openRec('${p.id}')">記録</button></div>`;
+  };
+  let html='';
+  if(!shown.length){
+    html=`<p style="color:#888;font-size:14px;">${store.points.length?'条件に合う点がありません':'境界点がありません'}</p>`;
+  } else if(!grouped){
+    html=shown.map(row).join('');
+  } else {
+    /* まとまりは「条件に合う全部」から作る（先頭200点だけで区切ると、
+       他のまとまりが画面から消えてしまい「打設したはずの点が無い」と見えるため）。
+       たたんである間は中身を作らないので、数千点あっても重くならない。 */
+    const keys=[]; const bag={};
+    for(const p of shown){ const k=ptGroupKey(p); if(!(k in bag)){ bag[k]=[]; keys.push(k); } bag[k].push(p); }
+    if(ptGroup==='date') keys.sort().reverse();
+    if(ptGroup==='st'){
+      const order=['打設','既設','未'];
+      keys.sort((a,b)=>order.indexOf(a)-order.indexOf(b));
+    }
+    ptGroupKeysNow=keys.slice();
+    html=keys.map(k=>{
+      const op=ptGroupIsOpen(k);
+      const list=bag[k], cut=list.slice(0, PT_PAGE);
+      return `<button type="button" onclick="togglePtGroupAt(${keys.indexOf(k)})"
+        style="display:flex;width:100%;align-items:center;gap:6px;margin:8px 0 2px;padding:6px 2px;
+          font-size:13px;font-weight:bold;background:none;border:none;border-bottom:1px solid #ddd;color:#666c74;">
+        <span style="font-size:11px;">${op?'▼':'▶'}</span>
+        <span style="flex:1;text-align:left;">${esc(ptGroupLabel(k))}</span>
+        <span style="font-weight:normal;">${list.length}点</span></button>`
+        + (op ? cut.map(row).join('')
+                + (list.length>cut.length
+                   ? `<p style="font-size:12.5px;color:#888;margin:4px 0 8px;">先頭${cut.length}点を出しています（${list.length}点中）。絞り込むと残りが見えます。</p>`
+                   : '')
+              : '');
+    }).join('');
+  }
+  document.getElementById('pointList').innerHTML=html;
+
+  document.getElementById('routeList').innerHTML = store.routes.length
+    ? store.routes.map(r=>
+      `<div class="listRow">
+        <span style="flex:1;min-width:0;">
+          <b>${fmtDist(routeLength(r.ptIds))} m</b>
+          <span class="coords" style="display:block;white-space:normal;">${esc(routeLabel(r))}</span>
+          <span class="coords" style="display:block;">${dateLabel(r.date)}　${r.ptIds.length}点</span></span>
+        <button type="button" class="del" onclick="delRoute('${r.id}')">削除</button></div>`).join('')
+    : '<p style="color:#888;font-size:14px;">計測線がありません（「計測」タブで点をタップ）</p>';
+
+  document.getElementById('lineList').innerHTML = store.lines.length
+    ? store.lines.map(l=>{
+      const s=lineSegments(l);
+      const nv=(l.ptIds||[]).filter(Boolean).length;
+      return `<div class="listRow">
+        <span class="swatch" style="background:${disp('lineColor')}"></span>
+        <span style="flex:1;min-width:0;"><b>${esc(l.name||('画地'+l.no))}</b>
+          <span class="coords" style="display:block;">${nv}頂点　${s.n}辺　${l.closed?'閉じた線':'開いた線'}　延長 ${fmtDist(s.total)}m</span>
+          ${l.lost?`<span class="coords" style="display:block;color:#b3261e;">座標が無い頂点 ${l.lost}件（その前後の辺は引いていません）</span>`:''}</span>
+        <button type="button" class="del" onclick="closePanel('listPanel');fitToLine('${l.id}')" title="この画地へ移動">⤢</button></div>`;
+    }).join('')
+    : '<p style="color:#888;font-size:14px;">画地の線がありません（画地データ入りのSIMAを取り込むと出ます）</p>';
+
+  document.getElementById('importList').innerHTML = store.imports.length
+    ? store.imports.map(imp=>{
+      const n = imp.kind==='ref' ? refPointsOf(imp.id).length : pointsOf(imp.id).length;
+      return `<div class="listRow">
+        <span class="stChip ${imp.kind==='ref'?'no':'da'}" style="${imp.kind==='ref'?`background:${REF_STROKE};`:''}">${imp.kind==='ref'?'基準点':'境界点'}</span>
+        <span style="flex:1"><b>${esc(imp.name)}</b>
+          <span class="coords" style="display:block;">${imp.src==='sima'?'SIMA':'CSV'}　${n}点　${linesOf(imp.id).length}画地</span></span>
+        <button type="button" class="del" onclick="delImport('${imp.id}')">削除</button></div>`;
+    }).join('')
+    : '<p style="color:#888;font-size:14px;">取り込んだファイルはありません</p>';
+
+  const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
+  set('ptCount', store.points.length);
+  set('rtCount', store.routes.length);
+  set('lnCount', store.lines.length);
+  set('refCount', store.refPoints.length);
+  set('strokeCount', `${store.strokes.length} 本の線`);
+  openPanel('listPanel');
+}
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fitToPoint(id){
+  const p=ptById(id); if(!p) return;
+  state.view.cx=p.x; state.view.cy=p.y;
+  state.view.scale=clampScale(Math.max(state.view.scale, 20));
+  state.follow=false; updateFollowBtn(); draw();
+  toast(`${p.name} へ移動しました`);
+}
+function fitToBox(xs,ys){
+  if(!xs.length) return;
+  const x0=Math.min(...xs), x1=Math.max(...xs), y0=Math.min(...ys), y1=Math.max(...ys);
+  state.view.cx=(x0+x1)/2; state.view.cy=(y0+y1)/2;
+  const w=Math.max(x1-x0,20), h=Math.max(y1-y0,20);
+  state.view.scale=clampScale(Math.min(W/w, H/h)*0.85);
+  state.follow=false; updateFollowBtn(); draw();
+}
+function fitToLine(id){
+  const l=store.lines.find(x=>x.id===id); if(!l) return;
+  const idx=ptIndex();
+  const pts=l.ptIds.map(i=>idx.get(i)).filter(Boolean);
+  fitToBox(pts.map(p=>p.x), pts.map(p=>p.y));
+  toast(`${l.name||('画地'+l.no)} へ移動しました`);
+}
+function fitToImport(id){
+  const imp=importById(id);
+  const pts = imp && imp.kind==='ref' ? refPointsOf(id) : pointsOf(id);
+  if(!pts.length){ draw(); return; }
+  fitToBox(pts.map(p=>p.x), pts.map(p=>p.y));
+}
+function updateListCount(){
+  updateProg();
+  if(document.getElementById('ribbonCmd')) renderRibbon();
+}
+
+/* ================= 図面（GeoTIFF）の管理 ================= */
+const TIFF_MAX = 3;
+function tiffList(){ return state.tiffs || (state.tiffs=[]); }
+function visibleTiffs(){ return tiffList().filter(t=>t.visible!==false); }
+/* 既存の処理（座標・拡大時の高精細表示）が見るのは「いちばん上の見えている図面」 */
+function syncTiffTop(){
+  const v = visibleTiffs();
+  const top = v.length ? v[v.length-1] : null;
+  if(state.tiff !== top){ state.tiff = top; state.detail=null; detToken++; }
+  if(top){ state.epsg = top.epsg; state.geographic = top.geographic; state.tiffInfo = top.info||''; }
+  else { state.tiffInfo=''; }
+}
+function openTiffs(){ renderTiffs(); openPanel('tiffPanel'); }
+function renderTiffs(){
+  const L = tiffList();
+  document.getElementById('tiffRows').innerHTML = L.length ? L.map((t,i)=>{
+    const on = t.visible!==false;
+    return `<div class="listRow">
+      <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
+        onclick="toggleTiff('${t.id}')">${on?'表示':'非表示'}</button>
+      <span style="flex:1;">${esc(t.name)}${i===L.length-1?'<span class="badge">最前面</span>':''}
+        <span class="coords" style="display:block;">${esc(tiffLine(t))}</span></span>
+      <button type="button" class="del" onclick="moveTiff('${t.id}',1)" title="手前へ">▲</button>
+      <button type="button" class="del" onclick="moveTiff('${t.id}',-1)" title="奥へ">▼</button>
+      <button type="button" class="del" onclick="fitToTiff('${t.id}')" title="この図面へ移動">⤢</button>
+      <button type="button" class="del" onclick="delTiff('${t.id}')">削除</button></div>`;
+  }).join('') : '<p style="color:#888;font-size:14px;">図面を読み込んでいません（［図面を追加］から読み込めます）</p>';
+}
+function tiffLine(t){
+  const z = epsgToZone(t.epsg);
+  return `EPSG:${t.epsg||'不明'}${z?`（${z}系）`:t.geographic?'（経緯度）':''}`
+       + ` / ${t.iw}×${t.ih}${t.kind?` / ${t.kind}`:''}`;
+}
+function toggleTiff(id){
+  const t=tiffList().find(x=>x.id===id); if(!t) return;
+  t.visible = t.visible===false;
+  syncTiffTop(); renderTiffs(); draw();
+}
+function moveTiff(id,dir){
+  const L=tiffList(), i=L.findIndex(x=>x.id===id);
+  const j=i+dir;
+  if(i<0||j<0||j>=L.length) return;
+  L.splice(j,0,L.splice(i,1)[0]);
+  syncTiffTop(); renderTiffs(); draw();
+}
+function fitToTiff(id){
+  const t=tiffList().find(x=>x.id===id); if(!t) return;
+  state.view.cx=(t.bbox[0]+t.bbox[2])/2; state.view.cy=(t.bbox[1]+t.bbox[3])/2;
+  state.view.scale=clampScale(Math.min(W/(t.bbox[2]-t.bbox[0]), H/(t.bbox[3]-t.bbox[1]))*0.95);
+  state.follow=false; updateFollowBtn();
+  closePanel('tiffPanel'); draw();
+}
+function delTiff(id){
+  const t=tiffList().find(x=>x.id===id); if(!t) return;
+  if(!confirm(`【削除するもの】図面「${t.name}」だけ\n【残るもの】点・路線・メモ・ほかの図面\n【元に戻す】取消では戻せません（同じファイルを読み直せます）`)) return;
+  state.tiffs = tiffList().filter(x=>x.id!==id);
+  syncTiffTop(); renderTiffs(); renderRibbon(); draw();
+  toast('図面を削除しました');
+}
+function clearTiffs(){
+  const n=tiffList().length;
+  if(!n){ toast('読み込んでいる図面はありません'); return; }
+  if(!confirm(`【削除するもの】読み込んだ図面 ${n}枚すべて\n【残るもの】点・路線・メモ\n【元に戻す】取消では戻せません（同じファイルを読み直せます）`)) return;
+  state.tiffs=[]; syncTiffTop(); renderTiffs(); renderRibbon(); draw();
+  toast(`図面 ${n}枚を削除しました`);
+}
+
+/* ================= 画面の表示設定 ================= */
+const DISP_SET = {
+  pt: { title:'表示設定（点）', keys:[
+    ['col',  'stDaColor',   '打設した点の色'],
+    ['col',  'stKiColor',   '既設だった点の色'],
+    ['col',  'stNoColor',   'まだの点の色'],
+    ['size', 'ptMarkSize',  '点の大きさ'],
+    ['size', 'ptNameSize',  '点名の大きさ'],
+    ['col',  'refColor',    '基準点の色'],
+    ['size', 'refMarkSize', '基準点の大きさ'],
+    ['size', 'refNameSize', '基準点の点名の大きさ'] ] },
+  line: { title:'表示設定（線・距離）', keys:[
+    ['col',  'lineColor',   '画地の線の色'],
+    ['num',  'lineWidth',   '画地の線の太さ', 1, 8],
+    ['col',  'routeColor',  '計測線の色'],
+    ['num',  'routeWidth',  '計測線の太さ', 1, 8],
+    ['col',  'distColor',   '距離の文字の色'],
+    ['size', 'distSize',    '距離の文字の大きさ'] ] },
+};
+let dispKind='pt';
+function openDispPt(){   dispKind='pt';   renderDisp(); openPanel('dispPanel'); }
+function openDispLine(){ dispKind='line'; renderDisp(); openPanel('dispPanel'); }
+function renderDisp(){
+  const def=DISP_SET[dispKind] || DISP_SET.pt;
+  document.getElementById('dispTitle').textContent=def.title;
+  document.getElementById('dispRows').innerHTML = def.keys.map(([t,k,lb,mn,mx])=>{
+    if(t==='col') return `<div class="formRow"><label>${lb}</label>
+      <input type="color" value="${esc(disp(k))}" onchange="setDisp('${k}',this.value)"
+        style="flex:none;width:64px;height:40px;padding:2px;"></div>`;
+    if(t==='num') return `<div class="formRow"><label>${lb}</label>
+      <input type="number" min="${mn}" max="${mx}" step="1" value="${+disp(k)}"
+        onchange="setDisp('${k}',this.value)"><span style="color:#888;font-size:13px;">px</span></div>`;
+    return `<div class="formRow"><label>${lb}</label><select onchange="setDisp('${k}',this.value)">`
+      + Object.keys(SIZE_NAMES).map(v=>
+        `<option value="${v}" ${disp(k)===v?'selected':''}>${SIZE_NAMES[v]}</option>`).join('')
+      + `</select></div>`;
+  }).join('');
+  applyA11y(document.getElementById('dispPanel'));
+}
+function setDisp(k,v){
+  if(!store.disp) store.disp={};
+  if(k==='routeWidth'||k==='lineWidth'){ const n=parseInt(v,10); v=Math.min(8,Math.max(1,isFinite(n)?n:2)); }
+  store.disp[k]=v;
+  save(); draw(); renderDisp();
+}
+function resetDisp(){
+  const def=DISP_SET[dispKind] || DISP_SET.pt;
+  if(!store.disp) store.disp={};
+  def.keys.forEach(([,k])=>{ store.disp[k]=DEFAULT_DISP[k]; });
+  save(); draw(); renderDisp(); toast(`${def.title}を初期値に戻しました`);
+}
+
+/* ================= 設定 ================= */
+const FONT_SCALES=['m','l','xl'];
+function fontScale(){
+  const v=store.settings.fontScale;
+  return FONT_SCALES.includes(v)?v:'m';
+}
+function applyFontScale(){
+  const v=fontScale();
+  if(v==='m') document.documentElement.removeAttribute('data-fs');
+  else document.documentElement.setAttribute('data-fs',v);
+  if(typeof updateRibbonEdges==='function') setTimeout(updateRibbonEdges,0);
+  if(typeof resize==='function') setTimeout(resize,0);
+}
+function openSettings(){
+  document.getElementById('setFontScale').value=fontScale();
+  document.getElementById('setWorker').value=store.settings.worker||'';
+  document.getElementById('setThinPt').value=+store.settings.thinPt||300;
+  document.getElementById('setThinName').value=+store.settings.thinName||150;
+  document.getElementById('setThinDist').value=+store.settings.thinDist||40;
+  const sel=document.getElementById('setZone');
+  sel.innerHTML=ZONES.map((z,i)=>`<option value="${i+1}" ${store.settings.zone===i+1?'selected':''}>第${i+1}系</option>`).join('');
+  openPanel('settingsPanel');
+}
+function saveSettings(){
+  store.settings.fontScale=document.getElementById('setFontScale').value;
+  applyFontScale();
+  store.settings.worker=document.getElementById('setWorker').value.trim();
+  const num=(id,dv,lo,hi)=>{
+    const n=parseInt(document.getElementById(id).value,10);
+    return isFinite(n) ? Math.min(hi,Math.max(lo,n)) : dv;
+  };
+  store.settings.thinPt   = num('setThinPt',300,20,5000);
+  store.settings.thinName = num('setThinName',150,10,5000);
+  store.settings.thinDist = num('setThinDist',40,10,400);
+  const zSel=parseInt(document.getElementById('setZone').value)||1;
+  if(zSel!==store.settings.zone) changeZone(zSel, true);
+  if(state.gps.ok){ try{ const [x,y]=gpsToMap(state.gps.lon,state.gps.lat); state.gps.x=x; state.gps.y=y; }catch(e){} }
+  save(); closePanel('settingsPanel'); updateActionbar(); draw();
+  toast('設定を保存しました');
+}
+
+/* ================= SIMA / CSV の取込 ================= */
+function decodeText(buf){
+  const u8=new Uint8Array(buf);
+  // BOM付きUTF-8はそのまま、それ以外は自動判別（測量ソフトの出力はShift-JISが多い）
+  if(u8.length>=3 && u8[0]===0xEF && u8[1]===0xBB && u8[2]===0xBF)
+    return new TextDecoder('utf-8').decode(u8.subarray(3));
+  let enc='UNKNOWN';
+  try{ enc=Encoding.detect(u8)||'UNKNOWN'; }catch(e){}
+  if(enc==='UTF8'||enc==='ASCII') return new TextDecoder('utf-8').decode(u8);
+  try{ return Encoding.codeToString(Encoding.convert(u8,'UNICODE',enc==='UNKNOWN'?'SJIS':enc)); }
+  catch(e){ return new TextDecoder('utf-8').decode(u8); }
+}
+function splitCsvLine(line){          // 引用符つきフィールドに対応した簡易パーサ
+  const out=[]; let cur='', q=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(q){
+      if(c==='"'){ if(line[i+1]==='"'){ cur+='"'; i++; } else q=false; }
+      else cur+=c;
+    } else if(c==='"') q=true;
+    else if(c===','){ out.push(cur); cur=''; }
+    else cur+=c;
+  }
+  out.push(cur);
+  return out.map(v=>v.trim());
+}
+/* SIMAを座標データと画地データの両方で読む。
+     A01,点番号,点名,X(北),Y(東),Z,          … 座標
+     D00,区画番号,区画名,…                    … 画地の始まり
+     B01,点番号,点名,                          … 画地の構成点
+     C03,辺長,方向角(度.分秒),                 … その点から次の点まで
+     D99,                                      … 画地の終わり
+   C03の辺長は座標から計算した値と一致するので、そのまま距離として使う。 */
+function parseSimaFull(text){
+  const pts=[], plots=[];
+  let cur=null, lastV=null;
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line) continue;
+    const f=splitCsvLine(line);
+    const t=(f[0]||'').toUpperCase();
+    if(t==='A01'){
+      const X=parseFloat(f[3]), Y=parseFloat(f[4]), Z=parseFloat(f[5]);
+      if(!isFinite(X)||!isFinite(Y)) continue;
+      const no=(f[1]||'').trim();
+      pts.push({ no, name:(f[2]||'').trim()||no||String(pts.length+1),
+                 X, Y, z:isFinite(Z)?Z:0, stake:'' });
+    } else if(t==='D00'){
+      cur={ no:(f[1]||'').trim(), name:(f[2]||'').trim(), verts:[] };
+      plots.push(cur); lastV=null;
+    } else if(t==='B01' && cur){
+      lastV={ no:(f[1]||'').trim(), name:(f[2]||'').trim(), d:null };
+      cur.verts.push(lastV);
+    } else if(t==='C03' && lastV){
+      const d=parseFloat(f[1]);
+      lastV.d = isFinite(d) ? d : null;
+    } else if(t==='D99'){ cur=null; lastV=null; }
+  }
+  return { pts, plots:plots.filter(p=>p.verts.length>=2) };
+}
+/* CSV: 点名,X(北),Y(東),Z,属性,杭種 */
+function parseCsvText(text){
+  const pts=[];
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.replace(/^﻿/,'').trim();
+    if(!line) continue;
+    const f=splitCsvLine(line);
+    if(f.length<3) continue;
+    const X=parseFloat(f[1]), Y=parseFloat(f[2]);
+    if(!isFinite(X)||!isFinite(Y)) continue;
+    const Z=parseFloat(f[3]);
+    pts.push({ no:String(pts.length+1), name:(f[0]||'').trim()||String(pts.length+1),
+               X, Y, z:isFinite(Z)?Z:0, stake:(f[5]||'').trim() });
+  }
+  return { pts, plots:[] };
+}
+/* SIMAかCSVかの判定。
+   CSVの1列目は点名なので、点名が "A01" の点が1つでもあると
+   「行頭が A01」という判定では誤ってSIMAとして読んでしまう（座標がずれた点が黙って入る）。
+   そこで、点名になり得ない**構造の行**（G00/Z00/Z01/A00/A99/D00/D99）だけを見る。
+   本物のSIMAは必ず先頭に G00 か Z00 か A00 があるので、先頭40行に限って探す。 */
+function looksSima(text){
+  const lines=text.split(/\r?\n/);
+  let seen=0;
+  for(const raw of lines){
+    const line=raw.replace(/^﻿/,'').trim();
+    if(!line) continue;
+    /* 「コードだけの行」「ヘッダ行」など、CSVの点名では作れない形だけを見る */
+    if(/^(A00|A99|D99)\s*,?\s*$/i.test(line)) return true;   // A00, / A99, / D99,
+    if(/^Z01\s*,\s*\d+\s*,?\s*$/i.test(line)) return true;   // Z01,2,
+    if(/^G00\s*,\s*\d{1,2}\s*,/i.test(line))  return true;   // G00,04,現場名,
+    if(/^Z00\s*,[^,]*\/\*/.test(line))        return true;   // Z00, /* 座標データ */,
+    if(++seen>=40) break;
+  }
+  return false;
+}
+let pendingImport=null, importKind='bp';
+function pickImport(kind){
+  importKind = (kind==='ref') ? 'ref' : 'bp';
+  document.getElementById('fileImport').click();
+}
+function setImportKind(k){
+  importKind = (k==='ref') ? 'ref' : 'bp';
+  renderImportKind();
+}
+function renderImportKind(){
+  document.querySelectorAll('#impKindSeg .seg').forEach(b=>
+    b.classList.toggle('on', b.dataset.kind===importKind));
+  const n=document.getElementById('impKindNote');
+  const plots = pendingImport && pendingImport.parsed ? pendingImport.parsed.plots.length : 0;
+  if(n) n.innerHTML = importKind==='ref'
+    ? '<b>基準点</b>として取り込みます。蛍光緑で表示され、<b>打設・既設の記録はできません</b>（復元の対象ではないため）。計測線の相手には選べます。'
+      + (plots?`<br><span style="color:#b3261e;">※このファイルの画地（線）${plots}件は入りません。線も入れたいときは［境界点］で取り込んでください。</span>`:'')
+    : '<b>境界点</b>として取り込みます。地図でタップして<b>打設・既設を記録</b>できます。'
+      + (plots?`画地の線 ${plots}件もいっしょに入ります。`:'このファイルに画地データはありません。');
+}
+document.getElementById('fileImport').addEventListener('change', async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  e.target.value='';
+  try{
+    const text=decodeText(await file.arrayBuffer());
+    const isSima=looksSima(text);
+    const parsed=isSima?parseSimaFull(text):parseCsvText(text);
+    if(!parsed.pts.length){
+      alert('座標を読み取れませんでした。\n\nSIMAは A01 行、CSVは「点名, X(北), Y(東), Z, 属性, 杭種」の並びを想定しています。\nファイル: '+file.name);
+      return;
+    }
+    pendingImport={ file, parsed, src:isSima?'sima':'csv' };
+    showImportPreview();
+  }catch(err){ alert('取込に失敗しました: '+(err&&err.message||err)); }
+});
+function showImportPreview(){
+  const {file, parsed, src}=pendingImport;
+  const rows=parsed.pts;
+  const xs=rows.map(r=>r.Y), ys=rows.map(r=>r.X);
+  const rng=a=>`${Math.min(...a).toFixed(1)} 〜 ${Math.max(...a).toFixed(1)}`;
+  const plotLine = parsed.plots.length
+    ? `画地（線）: <b>${parsed.plots.length}件</b>　${parsed.plots.reduce((a,p)=>a+p.verts.length,0)}辺<br>`
+      + `<span style="font-size:12px;color:#6b5320;">${parsed.plots.slice(0,4).map(p=>esc(p.name||('画地'+p.no))+`（${p.verts.length}）`).join('、')}`
+      + `${parsed.plots.length>4?` ほか${parsed.plots.length-4}件`:''}</span><br>`
+    : '';
+  let warn='';
+  const t=state.tiff;
+  if(t && !state.geographic){
+    const inside=rows.filter(r=>r.Y>=t.bbox[0]&&r.Y<=t.bbox[2]&&r.X>=t.bbox[1]&&r.X<=t.bbox[3]).length;
+    if(inside===0) warn=`<div class="noteBox" style="background:#fdecea;border-color:#f0b7b1;color:#8c1d18;">
+      ⚠ 読み込んだ座標が、開いている図面の範囲から完全に外れています。<br>
+      系番号の違い、またはX（北）とY（東）の並びが逆の可能性があります。</div>`;
+  }
+  document.getElementById('importPreview').innerHTML =
+    `<div class="noteBox">ファイル: <b>${esc(file.name)}</b>（${src==='sima'?'SIMA形式':'CSV形式'}）<br>
+      点: <b>${rows.length}点</b><br>${plotLine}
+      X（北）: ${rng(ys)}<br>Y（東）: ${rng(xs)}<br>
+      いまの座標系: <b>第${store.settings.zone}系</b></div>` + warn;
+  document.getElementById('impName').value = file.name.replace(/\.[^.]+$/,'').slice(0,30);
+  renderImportKind();
+  openPanel('importPanel');
+}
+function commitImport(){
+  if(!pendingImport) return;
+  const {parsed, src}=pendingImport;
+  const kind=importKind;
+  const name=(document.getElementById('impName').value||'').trim()||(kind==='ref'?'基準点':'境界点');
+  const imp={ id:uid(), name, src, kind, ts:new Date().toISOString() };
+  store.imports.push(imp);
+  const byNo=new Map(), byName=new Map();
+  const target = kind==='ref' ? store.refPoints : store.points;
+  parsed.pts.forEach((r,i)=>{
+    const m=xyToMapPoint(r.X, r.Y);
+    const p={ id:uid(), impId:imp.id, no:r.no, name:r.name, x:m.x, y:m.y, z:r.z||0, idx:i };
+    if(kind==='ref') p.ref=true;
+    target.push(p);
+    if(r.no && !byNo.has(r.no)) byNo.set(r.no, p.id);
+    if(!byName.has(r.name)) byName.set(r.name, p.id);
+  });
+  /* 画地の線は境界点として取り込んだときだけ入れる（基準点は参考なので線を持たない） */
+  let nLine=0, nSeg=0, miss=0;
+  const idx=new Map(target.map(p=>[p.id,p]));
+  for(const pl of (kind==='ref' ? [] : parsed.plots)){
+    /* 座標が見つからない頂点は **null を入れて位置をそろえる**。
+       詰めてしまうと dists[i] が別の辺のラベルになり、
+       元データと違う距離が黙って地図に出てしまう。null の辺は描かない。 */
+    const ptIds=[], dists=[];
+    let lost=0;
+    for(const v of pl.verts){
+      const id = byNo.get(v.no) || byName.get(v.name) || null;
+      if(!id){ miss++; lost++; }
+      ptIds.push(id); dists.push(v.d);
+    }
+    if(ptIds.filter(Boolean).length<2) continue;
+    /* 最後の辺長が「末尾→先頭」と合えば閉じた線として扱う（画地はふつう閉じている） */
+    const a=idx.get(ptIds[ptIds.length-1]), b=idx.get(ptIds[0]);
+    const last=dists[dists.length-1];
+    const closed = !!(a && b && isFinite(last) && Math.abs(distBetween(a,b)-last) < 0.05);
+    store.lines.push({ id:uid(), impId:imp.id, no:pl.no, name:pl.name, ptIds, dists, closed, lost });
+    nLine++; nSeg += lineSegments(store.lines[store.lines.length-1], idx).n;
+  }
+  store.layers.hiddenImports=(store.layers.hiddenImports||[]).filter(i=>i!==imp.id);
+  pendingImport=null;
+  invalidatePtMap(); invalidatePlotMap();
+  save(); closePanel('importPanel'); updateListCount();
+  if(!state.tiff) fitToImport(imp.id); else draw();
+  toast(`「${name}」を ${parsed.pts.length}点`
+    + (nLine?`／${nLine}画地 ${nSeg}辺`:'') + ' 取り込みました'
+    + (miss?`（${miss}辺は点が見つからず飛ばしました）`:''));
+}
+function delImport(id){
+  const imp=importById(id);
+  if(!imp) return;
+  const isRef = imp.kind==='ref';
+  const pts = isRef ? refPointsOf(id) : pointsOf(id);
+  const done = isRef ? 0 : pts.filter(p=>stOf(p)!=='no').length;
+  const lns = linesOf(id).length;
+  if(!confirm(`【削除するもの】「${imp.name}」の ${pts.length}点`
+    + (lns?`と ${lns}画地の線`:'')
+    + (done?`\n　※このうち ${done}点は打設・既設の記録が入っています。記録もいっしょに消えます`:'')
+    + `\n【残るもの】ほかのファイルの点・線・記録\n【元に戻せるか】戻せません（自動控えからなら戻せます）\n\n削除しますか?`)) return;
+  const ids=new Set(pts.map(p=>p.id));
+  if(isRef) store.refPoints=store.refPoints.filter(p=>p.impId!==id);
+  else      store.points=store.points.filter(p=>p.impId!==id);
+  store.lines=store.lines.filter(l=>l.impId!==id);
+  store.routes.forEach(r=>r.ptIds=r.ptIds.filter(i=>!ids.has(i)));
+  store.routes=store.routes.filter(r=>r.ptIds.length>=2);
+  store.imports=store.imports.filter(i=>i.id!==id);
+  store.layers.hiddenImports=(store.layers.hiddenImports||[]).filter(i=>i!==id);
+  state.currentRoute=state.currentRoute.filter(i=>!ids.has(i));
+  /* 消した点を指したままの取消・やり直しを残すと、
+     ［取消］で「どこにも無い点でできた計測線」が復活して保存されてしまう。 */
+  clearUndoStacks();
+  invalidatePtMap(); invalidatePlotMap();
+  save(); draw(); updateListCount(); refreshEdits();
+  toast(`「${imp.name}」を削除しました`);
+}
+
+/* ================= 控え（JSON） ================= */
+function exportJson(){
+  download(new Blob([JSON.stringify(store,null,1)],{type:'application/json'}), `境界復元_控え_${todayStr()}.json`);
+  store.settings.lastExport=realTodayStr();
+  save(); renderRibbon();
+  toast('控えを保存しました');
+  hideAlert();
+}
+function updateBackupHint(){}
+async function openSnapshots(){
+  const box=document.getElementById('snapList');
+  box.innerHTML='<p style="color:#888;font-size:14px;">読込中…</p>';
+  openPanel('snapPanel');
+  let all=[];
+  try{ all=await idbReq('snapshots','readonly',s=>s.getAll()); }
+  catch(e){ box.innerHTML='<p style="color:#888;font-size:14px;">自動バックアップを読み込めません。</p>'; return; }
+  all.sort((a,b)=>a.id<b.id?1:-1);
+  if(!all.length){ box.innerHTML='<p style="color:#888;font-size:14px;">まだ自動バックアップがありません。</p>'; return; }
+  box.innerHTML=all.map(r=>{
+    const t=new Date(r.id);
+    const ts=isNaN(t)?r.id:`${r.date} ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+    return `<button type="button" class="menuItem" onclick="restoreSnapshot('${esc(r.id)}')">🕘 ${ts}
+      <span class="sub">点 ${r.pt} / 計測線 ${r.rt} / メモ ${r.st}</span></button>`;
+  }).join('');
+}
+async function restoreSnapshot(id){
+  let rec=null;
+  try{ rec=await idbGet('snapshots',id); }catch(e){}
+  if(!rec){ toast('この控えを読み込めません'); return; }
+  if(!confirm(`${id.slice(0,19).replace('T',' ')} の状態（点${rec.pt}）に戻します。\n現在のデータは置き換わります。よろしいですか?`)) return;
+  try{
+    await pushSnapshot(snapshotJson());
+    const d=JSON.parse(rec.json);
+    applyLoaded(d);
+    stakeList();
+    state.currentRoute=[]; clearUndoStacks();
+    savePending=true; await flushSave();
+    closePanel('snapPanel'); updateActionbar(); updateListCount(); draw();
+    toast('自動バックアップから復元しました');
+  }catch(e){ alert('復元に失敗しました: '+(e.message||e)); }
+}
+document.getElementById('fileJson').addEventListener('change', async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  e.target.value='';
+  try{
+    const d=JSON.parse(await file.text());
+    if(!d.points||!d.settings) throw new Error('形式が違います');
+    if(!confirm(`現在のデータを読込内容（点${d.points.length}）で置き換えます。よろしいですか?`)) return;
+    await pushSnapshot(snapshotJson());
+    applyLoaded(d);
+    const incoming=Object.assign({},d.settings);
+    delete incoming.mockDate; delete incoming.mockGps;
+    Object.assign(store.settings,incoming);
+    state.currentRoute=[]; clearUndoStacks();
+    stakeList();
+    save(); updateMockLabel(); updateActionbar(); updateListCount(); draw();
+    toast('控えを読み込みました');
+  }catch(err){ alert('読込に失敗しました: '+err.message); }
+});
+/* 他の人の控えを合流（置き換えではなく追加。同じidのものは飛ばす） */
+document.getElementById('fileMerge').addEventListener('change', async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  e.target.value='';
+  try{
+    const d=JSON.parse(await file.text());
+    if(!d.points||!d.settings) throw new Error('境界復元アプリの控えではないようです');
+    const workers=[...new Set((d.points||[]).map(p=>p.rec&&p.rec.w).filter(Boolean))];
+    const done=(d.points||[]).filter(p=>p.rec&&(p.rec.k==='da'||p.rec.k==='ki')).length;
+    if(!confirm(`控え（JSON）の中身を、今のデータに<追加>します。\n今あるものは消えません。同じ点・同じ線は自動で飛ばします。\n\n`
+      +`境界点 ${(d.points||[]).length}（記録済み ${done}）/ 画地 ${(d.lines||[]).length} / 計測線 ${(d.routes||[]).length}\n`
+      +`記録者: ${workers.join('、')||'（未設定）'}\n\nよろしいですか?`)) return;
+    await pushSnapshot(snapshotJson());
+    const r=mergeStore(d);
+    clearUndoStacks();
+    invalidatePtMap(); invalidatePlotMap();
+    save(); updateActionbar(); updateListCount(); draw();
+    alert(`読み込みました。\n\n`
+      +`境界点: ${r.addP}件を追加（重複 ${r.skipP}件は飛ばしました）\n`
+      +`そのうち記録の入った点: ${r.recP}件\n`
+      +`同じ点に既に記録があってそのままにした: ${r.keepP}件\n`
+      +`基準点 ${r.addRef} / 画地 ${r.addL} / 計測線 ${r.addR} / メモ ${r.addS} / ファイル ${r.addI}`);
+  }catch(err){ alert('読み込みに失敗しました: '+(err&&err.message||err)); }
+});
+function mergeStore(d){
+  const r={addP:0,skipP:0,recP:0,keepP:0,addRef:0,addL:0,addR:0,addS:0,addI:0};
+  const iid=new Set(store.imports.map(x=>x.id));
+  for(const x of (d.imports||[])){ if(iid.has(x.id)) continue; store.imports.push(x); iid.add(x.id); r.addI++; }
+  const pid=new Map(store.points.map(p=>[p.id,p]));
+  for(const p of (d.points||[])){
+    const cur=pid.get(p.id);
+    if(cur){
+      r.skipP++;
+      /* 同じ点は座標を触らず、記録だけ拾う。既に記録があるものは残す（後勝ちにしない） */
+      const has=p.rec&&(p.rec.k==='da'||p.rec.k==='ki');
+      if(has && stOf(cur)==='no'){ cur.rec=Object.assign({},p.rec); r.recP++; }
+      else if(has) r.keepP++;
+      continue;
+    }
+    store.points.push(p); pid.set(p.id,p); r.addP++;
+    if(p.rec&&(p.rec.k==='da'||p.rec.k==='ki')) r.recP++;
+  }
+  const rfid=new Set(store.refPoints.map(x=>x.id));
+  for(const x of (d.refPoints||[])){ if(rfid.has(x.id)) continue; store.refPoints.push(x); rfid.add(x.id); r.addRef++; }
+  const lid=new Set(store.lines.map(x=>x.id));
+  for(const x of (d.lines||[])){ if(lid.has(x.id)) continue; store.lines.push(x); lid.add(x.id); r.addL++; }
+  const rid=new Set(store.routes.map(x=>x.id));
+  const rkey=new Set(store.routes.map(x=>(x.ptIds||[]).join('>')));
+  for(const x of (d.routes||[])){
+    if(rid.has(x.id)) continue;
+    const k=(x.ptIds||[]).join('>');
+    if(rkey.has(k)) continue;
+    store.routes.push(x); rid.add(x.id); rkey.add(k); r.addR++;
+  }
+  const skey=new Set(store.strokes.map(x=>JSON.stringify(x)));
+  for(const x of (d.strokes||[])){ const k=JSON.stringify(x); if(skey.has(k)) continue; store.strokes.push(x); skey.add(k); r.addS++; }
+  return r;
+}
+async function clearAll(){
+  const c=progCounts();
+  if(!confirm(`【削除するもの】この端末の作業データすべて\n`
+    + `　境界点${c.all}（記録済み${c.done}）/ 画地${store.lines.length} / 計測線${store.routes.length} / 基準点${store.refPoints.length} / メモ${store.strokes.length}\n`
+    + `【残るもの】作業者名・系番号・杭種などの設定は残ります\n`
+    + `【元に戻せるか】［取消］では戻せません。削除直前の状態を自動控えに残すので、そこからなら戻せます\n\n`
+    + `削除しますか?`)) return;
+  if(!confirm('本当に削除しますか?　この操作は［取消］では戻せません。')) return;
+  await pushSnapshot(snapshotJson());
+  store.points=[]; store.refPoints=[]; store.lines=[]; store.routes=[]; store.strokes=[]; store.imports=[];
+  const keep=store.settings;
+  store.settings=Object.assign({}, DEFAULT_SETTINGS, {
+    zone:keep.zone, worker:keep.worker, fontScale:keep.fontScale,
+    stakes:(keep.stakes||DEFAULT_STAKES).slice(), stake:keep.stake,
+    thinPt:keep.thinPt, thinName:keep.thinName, thinDist:keep.thinDist,
+    baseMap:keep.baseMap, mockGps:keep.mockGps, mockDate:null, lastExport:null
+  });
+  store.layers={pt:true,ref:true,line:true,route:true,dist:true,memo:true,base:true,map:true,
+                hiddenImports:[],stNone:true,stDa:true,stKi:true};
+  state.currentRoute=[];
+  clearUndoStacks();
+  invalidatePtMap(); invalidatePlotMap();
+  save(); updateMockLabel(); updateActionbar(); updateListCount(); draw();
+  toast('全データを削除しました（自動バックアップから復元できます）');
+}
+function download(blob,name){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},1000);
+}
+
+/* ================= パネル/トースト ================= */
+/* ================= パネル/トースト ================= */
+function openPanel(id){ const e=document.getElementById(id); if(!e) return; e.classList.add('show'); applyA11y(e); }
+function closePanel(id){ const e=document.getElementById(id); if(e) e.classList.remove('show'); }
+function panelOpen(id){ const e=document.getElementById(id); return !!e && e.classList.contains('show'); }
+function closeAllPanels(){ document.querySelectorAll('.panel.show').forEach(e=>e.classList.remove('show')); }
+document.querySelectorAll('.panel').forEach(p=>{
+  p.addEventListener('click',e=>{ if(e.target===p) p.classList.remove('show'); });
+});
+let toastTimer=null;
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.style.display='block';
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.style.display='none',2500);
+}
+/* 時間のかかる処理の進み具合。中止できる */
+let curJob = null;
+function startJob(label, total){
+  curJob = { cancel:false, total, done:0, label };
+  const bar=document.getElementById('jobBar');
+  document.getElementById('jobFill').style.width='0%';
+  bar.classList.add('show');
+  updateJob(0, label);
+  return curJob;
+}
+function updateJob(done, text){
+  if(!curJob) return;
+  curJob.done = done;
+  const pct = curJob.total ? Math.min(100, done/curJob.total*100) : 0;
+  document.getElementById('jobFill').style.width = pct.toFixed(1)+'%';
+  document.getElementById('jobText').textContent = text;
+}
+function endJob(){
+  curJob = null;
+  document.getElementById('jobBar').classList.remove('show');
+}
+function cancelJob(){
+  if(curJob){ curJob.cancel = true; document.getElementById('jobText').textContent = '中止しています…'; }
+}
+/* 時間のかかる処理の途中経過（自動では消さない） */
+function showProgress(msg){
+  const t=document.getElementById('toast');
+  clearTimeout(toastTimer);
+  t.textContent=msg; t.style.display='block';
+}
+function hideProgress(){
+  const t=document.getElementById('toast');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.style.display='none',1200);
+}
+
+/* ================= 画面スリープ抑止 ================= */
+/* ================= 画面スリープ抑止 =================
+   選点・結線・メモ中に画面が消えると測位が止まり操作もやり直しになるため、
+   対応端末では Wake Lock を取得する（非対応端末では何もしない）。 */
+let wakeLock=null;
+async function updateWakeLock(){
+  const want = document.visibilityState==='visible' && state.mode!=='view';
+  try{
+    if(want && !wakeLock && navigator.wakeLock){
+      wakeLock=await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release',()=>{ wakeLock=null; });
+    } else if(!want && wakeLock){
+      await wakeLock.release(); wakeLock=null;
+    }
+  }catch(e){ wakeLock=null; }
+}
+document.addEventListener('visibilitychange', ()=>{
+  updateWakeLock();
+  if(document.visibilityState==='visible') updateBackupHint();
+});
+
+/* ================= オフライン対応（Service Worker） ================= */
+function updateOnlineBadge(){
+  const el=document.getElementById('offlineBadge');
+  if(el) el.style.display = navigator.onLine ? 'none' : 'inline';
+}
+window.addEventListener('online', updateOnlineBadge);
+window.addEventListener('offline', updateOnlineBadge);
+function setupPWA(){
+  try{
+    const mf={ name:appFull(), short_name:APP_NAME, start_url:location.pathname,
+      scope:'./', display:'standalone', orientation:'any',
+      background_color:'#ffffff', theme_color:'#1e3a5f' };
+    if(ICON_URL) mf.icons=[{src:ICON_URL, sizes:'512x512', type:'image/png', purpose:'any'}];
+    const link=document.createElement('link');
+    link.rel='manifest';
+    link.href=URL.createObjectURL(new Blob([JSON.stringify(mf)],{type:'application/manifest+json'}));
+    document.head.appendChild(link);
+    const ic=document.createElement('link');
+    ic.rel='apple-touch-icon'; ic.href=ICON_URL;
+    document.head.appendChild(ic);
+  }catch(e){}
+  if(!('serviceWorker' in navigator)) return;
+  if(location.protocol!=='https:' && location.hostname!=='localhost' && location.hostname!=='127.0.0.1') return;
+  navigator.serviceWorker.register('sw.js').then(reg=>{
+    navigator.serviceWorker.ready.then(r=>{
+      const sw=r.active||reg.active;
+      if(sw) sw.postMessage({type:'cache-self', url:location.href.split('#')[0]});
+    }).catch(()=>{});
+    reg.addEventListener('updatefound',()=>{
+      const nw=reg.installing;
+      if(!nw) return;
+      nw.addEventListener('statechange',()=>{
+        if(nw.state==='installed' && navigator.serviceWorker.controller){
+          showAlert('新しいバージョンがあります。',
+            [{label:'今すぐ更新',fn:'location.reload()'},{label:'あとで',fn:'hideAlert()'}]);
+          document.getElementById('alertBar').style.background='#1e73d2';
+        }
+      });
+    });
+  }).catch(()=>{});
+}
+/* ホーム画面用アイコン（外部ファイルを増やさないためデータURLで内蔵） */
+const ICON_URL=(()=>{
+  try{
+    const c=document.createElement('canvas'); c.width=c.height=512;
+    const g=c.getContext('2d');
+    g.fillStyle='#1e3a5f'; g.fillRect(0,0,512,512);
+    g.strokeStyle='rgba(255,255,255,.28)'; g.lineWidth=6;
+    for(let i=1;i<4;i++){ g.beginPath(); g.moveTo(i*128,0); g.lineTo(i*128,512);
+      g.moveTo(0,i*128); g.lineTo(512,i*128); g.stroke(); }
+    g.strokeStyle='#fff'; g.lineWidth=12;
+    g.beginPath(); g.moveTo(96,392); g.lineTo(232,140); g.lineTo(400,300); g.closePath(); g.stroke();
+    g.fillStyle='#d9261c'; g.beginPath(); g.arc(232,140,40,0,7); g.fill();
+    g.fillStyle='#4a9bf0'; g.beginPath(); g.arc(96,392,40,0,7); g.fill();
+    g.fillStyle='#4a9bf0'; g.beginPath(); g.arc(400,300,40,0,7); g.fill();
+    return c.toDataURL('image/png');
+  }catch(e){ return ''; }
+})();
+
+/* ================= 診断 ================= */
+/* ================= 診断 ================= */
+window.addEventListener('error', e=>{ toast('エラー: '+(e.message||'不明')); });
+window.addEventListener('unhandledrejection', e=>{
+  toast('エラー: '+((e.reason&&e.reason.message)||e.reason||'不明'));
+});
+setTimeout(()=>{
+  const miss=[];
+  if(typeof GeoTIFF==='undefined') miss.push('GeoTIFF');
+  if(typeof proj4==='undefined') miss.push('proj4');
+  if(typeof Encoding==='undefined') miss.push('Encoding');
+  if(miss.length) alert(`内蔵ライブラリを初期化できません（${miss.join(', ')}）。\nファイルが途中で切れている可能性があります。senten-map.html を置き直してください。`);
+},2000);
+
+/* ================= 初期化 ================= */
+(async function init(){
+  try{ await load(); }catch(e){}
+  const tEl=document.getElementById('appTitle');
+  if(tEl) tEl.innerHTML = `${esc(APP_NAME)} <small style="font-weight:normal;opacity:.7">`
+    + `${esc(APP_EDITION)} ${esc(APP_VERSION)}</small>`;
+  document.title = appFull();
+  applyA11y();
+  const hv=document.getElementById('helpVersion');
+  if(hv) hv.textContent = `この説明は ${appFull()}（ビルド ${APP_BUILD}）のものです。`;
+  resize();
+  state.view.scale=2;
+  state.viewRestored = restoreView();
+  if(!state.viewRestored && store.points.length){
+    fitToBox(store.points.map(p=>p.x), store.points.map(p=>p.y));
+  }
+  state.mode='view';
+  renderRibbon();
+  updateActionbar();
+  resize();
+  updateMockLabel();
+  updateListCount();
+  updateOnlineBadge();
+  setupPWA();
+  startGps();
+  setInterval(rememberView, 8000);
+  if(location.protocol==='file:'){
+    setTimeout(()=>toast('GPS利用にはHTTPSでの配置が必要です（使い方参照）'),800);
+  }
+  if(progCounts().done && daysSince(store.settings.lastExport)>=7){
+    setTimeout(()=>{
+      showAlert(store.settings.lastExport
+        ? `控え（JSON）を${daysSince(store.settings.lastExport)}日間保存していません。`
+        : '控え（JSON）をまだ端末外へ保存していません。',
+        [{label:'今すぐ保存',fn:'exportJson()'},{label:'あとで',fn:'hideAlert()'}]);
+      document.getElementById('alertBar').style.background='#c9741a';
+    },1500);
+  }
+})();
+
+</script>
+</body>
+</html>
