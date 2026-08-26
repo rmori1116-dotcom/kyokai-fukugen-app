@@ -2,14 +2,14 @@
 /* 版の表示はここ1か所から。ヘッダー・使い方・保存状態・PWA名すべてこれを使う */
 const APP_NAME    = '境界復元';
 const APP_EDITION = '地図版';
-const APP_VERSION = 'v0.2';
+const APP_VERSION = 'v0.3';
 const APP_BUILD   = '@@BUILD@@';          // ビルド時に日付と版ハッシュが入る
 function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
 function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
 
 const DEFAULT_SETTINGS = {
   zone:1, mockGps:false, colorMode:'auto', mockDate:null, worker:'',
-  stake:'コンクリート杭', stakes:null, stakesVer:1,
+  stake:'コンクリート杭', stakes:null, stakesVer:2,
   baseMap:'std', lastView:null, tiffAlpha:1, fontScale:'m',
   lastExport:null, setVer:1,
   thinPt:300,      // 画面内の点がこれを超えたら「線と粒」だけにする
@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = {
   thinDist:40      // 画面上でこのpx以上に見えている辺にだけ距離を出す
 };
 const store = {
+  appId:    'kyokai-fukugen-map-v1', // 選点地図版の保存データと取り違えないための識別子
   imports:  [],   // 取り込んだファイル {id, name, src:'sima'|'csv', kind:'bp'|'ref', ts}
   points:   [],   // 境界点（復元の対象） {id, impId, no, name, x(東), y(北), z, idx, rec?}
   refPoints:[],   // 基準点（参考・記録の対象外） {id, impId, no, name, x, y, z}
@@ -42,7 +43,9 @@ const state = {
   saveError:false,
   drawInfo:{ n:0, mode:'dot' }    // 直前の描画で点をどう出したか（画面の案内に使う）
 };
-const LS_KEY = 'fukugenAppData_v1';
+const APP_STORAGE_ID = 'kyokai-fukugen-map-v1';
+const LS_KEY = 'kyokaiFukugenMapData_v1';
+const LEGACY_LS_KEY = 'fukugenAppData_v1';
 /* 指先はマウスポインタより接触面が広く、わずかにずれやすい。
    タッチ端末では選点の当たり判定だけを広げ、密集点では最も近い点を選ぶ。 */
 const TOUCH_HIT_RADIUS = (navigator.maxTouchPoints>0 ||
@@ -50,10 +53,20 @@ const TOUCH_HIT_RADIUS = (navigator.maxTouchPoints>0 ||
 
 /* ================= 杭種 =================
    打設・既設を記録するときに選ぶ。点名は作らないので略字は持たない。 */
-const DEFAULT_STAKES = ['コンクリート杭','プラスチック杭','金属鋲','金属標','木杭','石杭','不明'];
+const DEFAULT_STAKES = ['コンクリート杭','プラスチック杭','金属鋲','金属標','金属プレート'];
 function stakeList(){
   const s = store.settings.stakes;
-  if(!Array.isArray(s) || !s.length) store.settings.stakes = DEFAULT_STAKES.slice();
+  /* 選点地図版の杭種はオブジェクト配列。保存先が衝突していた旧版でそれを
+     読むと「[object Object]」と表示されたため、文字列以外は既定値へ戻す。 */
+  const valid = Array.isArray(s) && s.length
+    && s.every(v=>typeof v==='string' && v.trim());
+  if(store.settings.stakesVer!==2 || !valid){
+    store.settings.stakes = DEFAULT_STAKES.slice();
+    store.settings.stakesVer = 2;
+    store.settings.stake = DEFAULT_STAKES[0];
+  }else{
+    store.settings.stakes = [...new Set(s.map(v=>v.trim()))];
+  }
   return store.settings.stakes;
 }
 function currentStake(){
@@ -263,8 +276,13 @@ function fmtDist(d){ return (Math.round(d*1000)/1000).toFixed(3); }
 
 /* ================= 永続化 ================= */
 <!--@SRC:1192-1277-->
+function isFukugenData(d){
+  if(!d || !d.settings || !Array.isArray(d.points) || !Array.isArray(d.routes)
+     || !Array.isArray(d.imports) || !Array.isArray(d.lines)) return false;
+  return !d.appId || d.appId===APP_STORAGE_ID; // appIdなしはv0.1〜v0.2の境界復元データ
+}
 function applyLoaded(d){
-  if(!d) return;
+  if(!isFukugenData(d)) return false;
   Object.assign(store.settings, d.settings||{});
   Object.assign(store.layers, d.layers||{});
   store.points   = d.points||[];
@@ -273,23 +291,29 @@ function applyLoaded(d){
   store.routes   = d.routes||[];
   store.strokes  = d.strokes||[];
   store.imports  = d.imports||[];
+  store.appId = APP_STORAGE_ID;
   store.disp = Object.assign({}, DEFAULT_DISP, d.disp||{});
   invalidatePtMap(); invalidatePlotMap();
+  return true;
 }
 async function load(){
   let loaded=null;
   try{
     const json=await idbGet(DB_STORE,DB_KEY);
-    if(json) loaded=JSON.parse(json);
+    if(json){ const d=JSON.parse(json); if(isFukugenData(d)) loaded=d; }
   }catch(e){}
   if(!loaded){
     try{
-      const raw=localStorage.getItem(LS_KEY);
+      const raw=localStorage.getItem(LS_KEY) || localStorage.getItem(LEGACY_LS_KEY);
       if(raw){
-        loaded=JSON.parse(raw);
-        applyLoaded(loaded);
-        await idbPut(DB_STORE,JSON.stringify(store),DB_KEY).catch(()=>{});
-        loaded=null;
+        const d=JSON.parse(raw);
+        if(isFukugenData(d)){
+          loaded=d;
+          applyLoaded(loaded);
+          localStorage.setItem(LS_KEY,JSON.stringify(store));
+          await idbPut(DB_STORE,JSON.stringify(store),DB_KEY).catch(()=>{});
+          loaded=null;
+        }
       }
     }catch(e){}
   }
@@ -329,7 +353,7 @@ async function showStorageInfo(){
   let offline='未対応（HTTPSで開いていない可能性があります）';
   try{
     if(window.caches){
-      const key=(await caches.keys()).find(k=>k.startsWith('fukugen-map-'));
+      const key=(await caches.keys()).find(k=>k.startsWith('kyokai-fukugen-map-'));
       if(!key) offline='未設定（sw.js が同じフォルダにあるか確認してください）';
       else{
         const c=await caches.open(key);
@@ -344,6 +368,7 @@ async function showStorageInfo(){
     +`アプリ: ${appFull()}\n`
     +`ビルド: ${APP_BUILD}\n\n`
     +`保存方式: ${mode}\n`
+    +`専用保存領域: ${DB_NAME}\n`
     +`永続化: ${persisted}\n`
     +`オフライン起動: ${offline}\n`
     +`使用量: ${usage}\n`
@@ -1104,6 +1129,7 @@ function delStake(i){
 function resetStakes(){
   if(!confirm('杭種の一覧を初期値に戻しますか?')) return;
   store.settings.stakes=DEFAULT_STAKES.slice();
+  store.settings.stakesVer=2;
   store.settings.stake=DEFAULT_STAKES[0];
   save(); openStakes(); updateActionbar();
 }
@@ -1838,7 +1864,7 @@ document.getElementById('fileJson').addEventListener('change', async e=>{
   e.target.value='';
   try{
     const d=JSON.parse(await file.text());
-    if(!d.points||!d.settings) throw new Error('形式が違います');
+    if(!isFukugenData(d)) throw new Error('境界復元アプリの控えではありません');
     if(!confirm(`現在のデータを読込内容（点${d.points.length}）で置き換えます。よろしいですか?`)) return;
     await pushSnapshot(snapshotJson());
     applyLoaded(d);
@@ -1857,7 +1883,7 @@ document.getElementById('fileMerge').addEventListener('change', async e=>{
   e.target.value='';
   try{
     const d=JSON.parse(await file.text());
-    if(!d.points||!d.settings) throw new Error('境界復元アプリの控えではないようです');
+    if(!isFukugenData(d)) throw new Error('境界復元アプリの控えではないようです');
     const workers=[...new Set((d.points||[]).map(p=>p.rec&&p.rec.w).filter(Boolean))];
     const done=(d.points||[]).filter(p=>p.rec&&(p.rec.k==='da'||p.rec.k==='ki')).length;
     if(!confirm(`控え（JSON）の中身を、今のデータに<追加>します。\n今あるものは消えません。同じ点・同じ線は自動で飛ばします。\n\n`

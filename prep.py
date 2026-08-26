@@ -42,6 +42,13 @@ new = "if(downInfo && Math.hypot(e.offsetX-downInfo.x,e.offsetY-downInfo.y)>(e.p
 if old not in text:
     sys.exit('共通操作部のタップ判定が見つかりません（v1.7との差分を確認してください）')
 text = text.replace(old, new, 1)
+
+# 選点地図版と同じoriginで配信しても、点・控え・地図タイルが混ざらない専用DB名にする。
+old_db = "const DB_NAME='sentenApp', DB_STORE='kv', DB_KEY='store', SNAP_KEEP=10;"
+new_db = "const DB_NAME='kyokaiFukugenMap', DB_STORE='kv', DB_KEY='store', SNAP_KEEP=10;"
+if text.count(old_db) != 1:
+    sys.exit('共通永続化部のDB名が見つかりません（v1.7との差分を確認してください）')
+text = text.replace(old_db, new_db, 1)
 OUT.write_text(text, encoding='utf-8')
 print(f'template.html {len(text.encode("utf-8"))/1024:.0f} KB  流用 {len(used)}箇所 '
       f'{sum(b-a+1 for a,b in used)}行')

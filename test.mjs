@@ -56,8 +56,11 @@ await page.waitForTimeout(300);
 
 /* ---------- 1. 起動 ---------- */
 ok('起動時にエラーが出ない', errors.length === 0, errors.slice(0, 3));
-eq('版数', await page.evaluate(() => APP_VERSION), 'v0.2');
+eq('版数', await page.evaluate(() => APP_VERSION), 'v0.3');
 eq('アプリ名', await page.evaluate(() => APP_NAME), '境界復元');
+eq('専用IndexedDB名', await page.evaluate(() => DB_NAME), 'kyokaiFukugenMap');
+eq('専用localStorage名', await page.evaluate(() => LS_KEY), 'kyokaiFukugenMapData_v1');
+eq('保存データの識別子', await page.evaluate(() => store.appId), 'kyokai-fukugen-map-v1');
 ok('タイトルに境界復元が入る', (await page.title()).includes('境界復元'));
 ok('ビルド情報が入っている', /^\d{4}-\d{2}-\d{2} \([0-9a-f]{12}\)$/.test(await page.evaluate(() => APP_BUILD)),
    await page.evaluate(() => APP_BUILD));
@@ -312,20 +315,20 @@ const recUI = await page.evaluate(() => {
   const html = document.getElementById('recBody').innerHTML;
   const shown = document.getElementById('recPanel').classList.contains('show');
   const title = document.getElementById('recTitle').textContent;
-  recPickSetStake('木杭'); recCommit('ki');
+  recPickSetStake('金属プレート'); recCommit('ki');
   const p = ptById(id);
   return { shown, title, want: p.name, hasDa: html.includes('打設'), hasKi: html.includes('既設'),
-           hasStake: html.includes('木杭'), st: stOf(p), stake: p.rec.s,
+           hasStake: html.includes('金属プレート'), st: stOf(p), stake: p.rec.s,
            carried: store.settings.stake };
 });
 eq('記録画面が開く', recUI.shown, true);
 eq('見出しは点名', recUI.title, recUI.want);
 ok('打設のボタンがある', recUI.hasDa);
 ok('既設のボタンがある', recUI.hasKi);
-ok('杭種の一覧に木杭がある', recUI.hasStake);
+ok('杭種の一覧に金属プレートがある', recUI.hasStake);
 eq('選んで記録できる', recUI.st, 'ki');
-eq('選んだ杭種が入る', recUI.stake, '木杭');
-eq('杭種は次に引き継がれる', recUI.carried, '木杭');
+eq('選んだ杭種が入る', recUI.stake, '金属プレート');
+eq('杭種は次に引き継がれる', recUI.carried, '金属プレート');
 
 /* ---------- 13. 基準点は記録できない ---------- */
 const ref = await page.evaluate(bytes => {
@@ -515,14 +518,14 @@ const fromList = await page2.evaluate(() => {
   const lstZ = +getComputedStyle(document.getElementById('listPanel')).zIndex;
   const both = document.getElementById('recPanel').classList.contains('show')
             && document.getElementById('listPanel').classList.contains('show');
-  recPickSetStake('石杭'); recCommit('da');
+  recPickSetStake('金属標'); recCommit('da');
   const p = ptById(id);
   return { recZ, lstZ, both, st: stOf(p), stake: p.rec.s,
            listStill: document.getElementById('listPanel').classList.contains('show') };
 });
 ok('一覧の上に記録画面が出る', fromList.both && fromList.recZ > fromList.lstZ, fromList);
 eq('一覧からも記録できる', fromList.st, 'da');
-eq('一覧からの記録にも杭種が入る', fromList.stake, '石杭');
+eq('一覧からの記録にも杭種が入る', fromList.stake, '金属標');
 eq('記録しても一覧は開いたまま', fromList.listStill, true);
 
 /* ---------- 19. 杭種 ---------- */
@@ -537,10 +540,18 @@ const stakes = await page2.evaluate(() => {
   window.confirm = org;
   return { def, added, after };
 });
-eq('初期の杭種は7種', stakes.def.length, 7);
-eq('初期の杭種の並び', stakes.def.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/木杭/石杭/不明');
+eq('初期の杭種は5種', stakes.def.length, 5);
+eq('初期の杭種の並び', stakes.def.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/金属プレート');
 ok('杭種を足せる', stakes.added.includes('境界標'));
-eq('杭種を消せる', stakes.after.length, 7);
+eq('杭種を消せる', stakes.after.length, 5);
+const badStakes = await page2.evaluate(() => {
+  store.settings.stakes=[{name:'コンクリート杭'},{name:'金属鋲'}];
+  store.settings.stakesVer=2;
+  store.settings.stake='[object Object]';
+  return { list:stakeList().slice(), current:store.settings.stake };
+});
+eq('オブジェクト杭種を5種類へ自動修復', badStakes.list.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/金属プレート');
+eq('不正な選択中杭種も修復', badStakes.current, 'コンクリート杭');
 
 /* ---------- 20. レイヤ ---------- */
 const layers = await page2.evaluate(() => {
@@ -735,7 +746,42 @@ const credit = await page2.evaluate(() => {
 });
 ok('出典は画面の中に収まる', credit.x > 0 && credit.y > 0 && credit.x + credit.w <= credit.W, credit);
 
-/* ---------- 24. スマホのタップ操作 ---------- */
+/* ---------- 24. 選点地図版の保存データと混ざらない ---------- */
+const isolateCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+const isolate = await isolateCtx.newPage();
+await isolate.goto(BASE.replace('fukugen-map.html','seed-not-found.html'));
+await isolate.evaluate(() => new Promise((resolve,reject) => {
+  const rq=indexedDB.open('sentenApp',3);
+  rq.onupgradeneeded=()=>{
+    const db=rq.result;
+    if(!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+    if(!db.objectStoreNames.contains('snapshots')) db.createObjectStore('snapshots',{keyPath:'id'});
+    if(!db.objectStoreNames.contains('tiles')) db.createObjectStore('tiles');
+    if(!db.objectStoreNames.contains('tilemeta')) db.createObjectStore('tilemeta');
+  };
+  rq.onerror=()=>reject(rq.error);
+  rq.onsuccess=()=>{
+    const db=rq.result, tx=db.transaction('kv','readwrite');
+    const selectionData={
+      points:[{id:'selection-point',name:'選点版の点',x:1,y:2}], routes:[], imports:[], refPoints:[], strokes:[],
+      settings:{stakes:[{id:'co',name:'コンクリート杭'}],stakesVer:2}, layers:{}, disp:{}
+    };
+    tx.objectStore('kv').put(JSON.stringify(selectionData),'store');
+    tx.oncomplete=()=>{db.close();resolve();}; tx.onerror=()=>reject(tx.error);
+  };
+}));
+await isolate.goto(BASE);
+await isolate.waitForFunction(() => typeof draw === 'function' && typeof store === 'object');
+const isolated = await isolate.evaluate(() => ({
+  db:DB_NAME, points:store.points.length, stakes:stakeList().slice(), appId:store.appId
+}));
+eq('選点版DBがあっても専用DBを使う', isolated.db, 'kyokaiFukugenMap');
+eq('選点版の点を読み込まない', isolated.points, 0);
+eq('選点版の杭種オブジェクトを読み込まない', isolated.stakes.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/金属プレート');
+eq('境界復元の識別子を維持', isolated.appId, 'kyokai-fukugen-map-v1');
+await isolateCtx.close();
+
+/* ---------- 25. スマホのタップ操作 ---------- */
 const mobileCtx = await browser.newContext({
   viewport: { width: 390, height: 844 },
   isMobile: true,

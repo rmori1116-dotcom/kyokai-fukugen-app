@@ -2,7 +2,7 @@
    fukugen-map.html と同じフォルダに置いてください。
    アプリ本体（HTML）をキャッシュし、圏外でも起動できるようにします。 */
 'use strict';
-const CACHE = 'fukugen-map-@@VERSION@@';
+const CACHE = 'kyokai-fukugen-map-@@VERSION@@';
 /* 置くファイル名（index.html / fukugen-map.html など）に依存しないよう、
    ここではフォルダのトップだけを控え、実際に開かれたURLはアプリ側から通知してもらう。 */
 const SHELL = ['./'];
@@ -34,8 +34,8 @@ self.addEventListener('message', e=>{
 self.addEventListener('activate', e=>{
   e.waitUntil((async ()=>{
     const keys = await caches.keys();
-    // 別サイトなので、このアプリのキャッシュだけを片づける
-    await Promise.all(keys.filter(k=>k.startsWith('fukugen-map-') && k!==CACHE)
+    // このアプリの現行・旧キャッシュだけを片づける（選点地図版には触れない）
+    await Promise.all(keys.filter(k=>(k.startsWith('kyokai-fukugen-map-') || k.startsWith('fukugen-map-')) && k!==CACHE)
                           .map(k=>caches.delete(k)));
     await self.clients.claim();
   })());
