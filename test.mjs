@@ -56,7 +56,7 @@ await page.waitForTimeout(300);
 
 /* ---------- 1. 起動 ---------- */
 ok('起動時にエラーが出ない', errors.length === 0, errors.slice(0, 3));
-eq('版数', await page.evaluate(() => APP_VERSION), 'v0.3');
+eq('版数', await page.evaluate(() => APP_VERSION), 'v0.5');
 eq('アプリ名', await page.evaluate(() => APP_NAME), '境界復元');
 eq('専用IndexedDB名', await page.evaluate(() => DB_NAME), 'kyokaiFukugenMap');
 eq('専用localStorage名', await page.evaluate(() => LS_KEY), 'kyokaiFukugenMapData_v1');
@@ -315,20 +315,55 @@ const recUI = await page.evaluate(() => {
   const html = document.getElementById('recBody').innerHTML;
   const shown = document.getElementById('recPanel').classList.contains('show');
   const title = document.getElementById('recTitle').textContent;
-  recPickSetStake('金属プレート'); recCommit('ki');
+  recPickSetStake('アルミプレート'); recCommit('ki');
   const p = ptById(id);
   return { shown, title, want: p.name, hasDa: html.includes('打設'), hasKi: html.includes('既設'),
-           hasStake: html.includes('金属プレート'), st: stOf(p), stake: p.rec.s,
+           hasStake: html.includes('アルミプレート'), st: stOf(p), stake: p.rec.s,
            carried: store.settings.stake };
 });
 eq('記録画面が開く', recUI.shown, true);
 eq('見出しは点名', recUI.title, recUI.want);
 ok('打設のボタンがある', recUI.hasDa);
 ok('既設のボタンがある', recUI.hasKi);
-ok('杭種の一覧に金属プレートがある', recUI.hasStake);
+ok('杭種の一覧にアルミプレートがある', recUI.hasStake);
 eq('選んで記録できる', recUI.st, 'ki');
-eq('選んだ杭種が入る', recUI.stake, '金属プレート');
-eq('杭種は次に引き継がれる', recUI.carried, '金属プレート');
+eq('選んだ杭種が入る', recUI.stake, 'アルミプレート');
+eq('杭種は次に引き継がれる', recUI.carried, 'アルミプレート');
+
+/* ---------- 12b. 杭種略称は表示だけに付ける ---------- */
+const stakeSuffix = await page.evaluate(() => {
+  const pairs = [
+    ['プラスチック杭','P'], ['金属鋲','B'], ['金属標','K'],
+    ['アルミプレート','L'], ['ペンキ','M'], ['コンクリート杭','C']
+  ];
+  const labels = pairs.map(([s]) => displayPointName({name:'A1',rec:{k:'da',s}}));
+  const abbrs = pairs.map(([s]) => stakeAbbr(s));
+  const p = store.points[10]; // 直前のテストでアルミプレートを記録済み
+  const rawName = p.name;
+  openRec(p.id);
+  const recTitle = document.getElementById('recTitle').textContent;
+  ptSearch=rawName; ptGroup='none'; openList('pt');
+  const listHas = document.getElementById('pointList').textContent.includes(rawName+'L');
+  const org = window.labelNoOverlap, drawn=[];
+  window.labelNoOverlap = (x,y,t) => { drawn.push(t); return true; };
+  fitToPoint(p.id); state.view.scale=40; draw();
+  window.labelNoOverlap = org;
+  ptSearch=''; closePanel('recPanel'); closePanel('listPanel');
+  return {
+    abbrs, labels, rawName, storedName:p.name, recTitle, listHas,
+    mapHas:drawn.includes(rawName+'L'),
+    unrecorded:displayPointName({name:'A1'}),
+    unknown:displayPointName({name:'A1',rec:{k:'ki',s:'独自杭'}})
+  };
+});
+eq('6種類の杭種略称', stakeSuffix.abbrs.join('/'), 'P/B/K/L/M/C');
+eq('点名の後に略称を表示', stakeSuffix.labels.join('/'), 'A1P/A1B/A1K/A1L/A1M/A1C');
+eq('未記録の点名には略称を付けない', stakeSuffix.unrecorded, 'A1');
+eq('略称未定義の独自杭は元の点名を表示', stakeSuffix.unknown, 'A1');
+eq('保存された点名は改名しない', stakeSuffix.storedName, stakeSuffix.rawName);
+eq('記録画面の点名に略称を表示', stakeSuffix.recTitle, stakeSuffix.rawName+'L');
+ok('一覧の点名に略称を表示', stakeSuffix.listHas);
+ok('地図の点名に略称を表示', stakeSuffix.mapHas, stakeSuffix);
 
 /* ---------- 13. 基準点は記録できない ---------- */
 const ref = await page.evaluate(bytes => {
@@ -540,18 +575,79 @@ const stakes = await page2.evaluate(() => {
   window.confirm = org;
   return { def, added, after };
 });
-eq('初期の杭種は5種', stakes.def.length, 5);
-eq('初期の杭種の並び', stakes.def.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/金属プレート');
+eq('初期の杭種は6種', stakes.def.length, 6);
+eq('初期の杭種の並び', stakes.def.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/アルミプレート/ペンキ');
 ok('杭種を足せる', stakes.added.includes('境界標'));
-eq('杭種を消せる', stakes.after.length, 5);
+eq('杭種を消せる', stakes.after.length, 6);
+const migratedStakes = await page2.evaluate(() => {
+  store.settings.stakes=['コンクリート杭','プラスチック杭','金属鋲','金属標','金属プレート','独自杭'];
+  store.settings.stakesVer=2;
+  store.settings.stake='金属プレート';
+  return { list:stakeList().slice(), ver:store.settings.stakesVer, current:store.settings.stake };
+});
+ok('旧版の杭種へペンキを追加', migratedStakes.list.includes('ペンキ'), migratedStakes);
+ok('金属プレートをアルミプレートへ移行', migratedStakes.list.includes('アルミプレート') && !migratedStakes.list.includes('金属プレート'), migratedStakes);
+eq('選択中の金属プレートも移行', migratedStakes.current, 'アルミプレート');
+ok('利用者が追加した杭種を移行時に保持', migratedStakes.list.includes('独自杭'), migratedStakes);
+eq('杭種設定をv4へ移行', migratedStakes.ver, 4);
 const badStakes = await page2.evaluate(() => {
   store.settings.stakes=[{name:'コンクリート杭'},{name:'金属鋲'}];
   store.settings.stakesVer=2;
   store.settings.stake='[object Object]';
   return { list:stakeList().slice(), current:store.settings.stake };
 });
-eq('オブジェクト杭種を5種類へ自動修復', badStakes.list.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/金属プレート');
+eq('オブジェクト杭種を6種類へ自動修復', badStakes.list.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/アルミプレート/ペンキ');
 eq('不正な選択中杭種も修復', badStakes.current, 'コンクリート杭');
+
+/* ---------- 19b. 復元点CSV ---------- */
+const csvOut = await page2.evaluate(() => {
+  const p0=store.points[0], p1=store.points[1];
+  p0.rec={k:'ki',d:'2026-08-28',w:'森',s:'アルミプレート',t:1};
+  p1.rec={k:'da',d:'2026-08-28',w:'森',s:'ペンキ',t:2};
+  const csv=buildRestorationCsv([p0,p1]);
+  const rows=csv.trimEnd().split(/\r?\n/).map(splitCsvLine);
+  const [X0,Y0]=pointToXY(p0);
+  const first=store.points[0], second=store.points[1];
+  store.points[0]=second; store.points[1]=first;
+  const ordered=restorationCsvPoints();
+  store.points[0]=first; store.points[1]=second;
+  const parsed=parseCsvText(csv);
+  ribbonTab='data'; ribbonOpen=true; renderRibbon();
+  return {
+    csv, rows, X0:csvNum(X0), Y0:csvNum(Y0), Z0:csvNum(p0.z||0), rawName:p0.name, no:p0.no,
+    orderedIds:ordered.slice(0,2).map(p=>p.id), wantIds:[p0.id,p1.id],
+    count:ordered.length, refCount:store.refPoints.length,
+    parsed:parsed.pts.slice(0,2),
+    hasButton:document.getElementById('ribbonCmd').textContent.includes('復元点CSV')
+  };
+});
+eq('CSVは10列', csvOut.rows[0].length, 10);
+eq('CSVの1列目は点番', csvOut.rows[0][0], csvOut.no);
+eq('CSVの2列目は元の点名', csvOut.rows[0][1], csvOut.rawName);
+ok('CSV点名に表示用略称を付けない', !csvOut.rows[0][1].endsWith('L'), csvOut.rows[0][1]);
+eq('CSVの3列目はX', csvOut.rows[0][2], csvOut.X0);
+eq('CSVの4列目はY', csvOut.rows[0][3], csvOut.Y0);
+eq('CSVの5列目はZ', csvOut.rows[0][4], csvOut.Z0);
+eq('CSVの6列目は固定マーク', csvOut.rows[0][5], '12,1.0,1,1');
+ok('固定マークを1列として引用', csvOut.csv.includes('"12,1.0,1,1"'), csvOut.csv.slice(0,120));
+eq('CSVの7列目はアルミプレート', csvOut.rows[0][6], 'アルミプレート');
+eq('ペンキもCSVへ出る', csvOut.rows[1][6], 'ペンキ');
+eq('CSVの8列目点種は空欄', csvOut.rows[0][7], '');
+eq('CSVの9列目リンクは空欄', csvOut.rows[0][8], '');
+eq('既設点だけ10列目へ既設点', csvOut.rows[0][9], '既設点');
+eq('打設点の備考は空欄', csvOut.rows[1][9], '');
+eq('SIMAの取込順に並べ直す', csvOut.orderedIds.join('/'), csvOut.wantIds.join('/'));
+eq('CSV出力は境界点だけ', csvOut.count, 2397);
+ok('基準点はCSV件数に含めない', csvOut.refCount>0 && csvOut.count!==csvOut.refCount*2, csvOut);
+eq('10列CSVを再取込すると点番を保持', csvOut.parsed[0].no, csvOut.no);
+eq('10列CSVを再取込すると点名を保持', csvOut.parsed[0].name, csvOut.rawName);
+eq('10列CSVを再取込すると杭種を保持', csvOut.parsed[0].stake, 'アルミプレート');
+ok('データタブに復元点CSVボタンがある', csvOut.hasButton);
+const csvDownloadWait = page2.waitForEvent('download');
+await page2.evaluate(() => exportRestorationCsv());
+const csvDownload = await csvDownloadWait;
+ok('CSVファイルを実際にダウンロードできる', /^境界復元_復元点_\d{4}-\d{2}-\d{2}\.csv$/.test(csvDownload.suggestedFilename()), csvDownload.suggestedFilename());
+ok('ダウンロードしたCSVは空ではない', readFileSync(await csvDownload.path()).length > 100, await csvDownload.path());
 
 /* ---------- 20. レイヤ ---------- */
 const layers = await page2.evaluate(() => {
@@ -777,7 +873,7 @@ const isolated = await isolate.evaluate(() => ({
 }));
 eq('選点版DBがあっても専用DBを使う', isolated.db, 'kyokaiFukugenMap');
 eq('選点版の点を読み込まない', isolated.points, 0);
-eq('選点版の杭種オブジェクトを読み込まない', isolated.stakes.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/金属プレート');
+eq('選点版の杭種オブジェクトを読み込まない', isolated.stakes.join('/'), 'コンクリート杭/プラスチック杭/金属鋲/金属標/アルミプレート/ペンキ');
 eq('境界復元の識別子を維持', isolated.appId, 'kyokai-fukugen-map-v1');
 await isolateCtx.close();
 

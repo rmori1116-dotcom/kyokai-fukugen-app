@@ -532,6 +532,8 @@
   <h3>データの保持</h3>
   <p>点・線・記録・設定は端末内（IndexedDB）に自動保存されます（図面は毎回読込が必要）。変更のたびに端末内へ自動バックアップが残り、「確認」タブの<b>［自動控え］</b>でいつでも戻せます。</p>
   <p>端末の故障・初期化に備えて、作業終了時には「データ」タブの<b>［保存］</b>でJSONを端末外へ出しておいてください。複数人で分担したときは<b>［控えを読む］</b>で合流できます（今あるものは消えません）。</p>
+  <h3>復元点CSV</h3>
+  <p>「データ」タブの<b>［復元点CSV］</b>で、境界点を取込ファイル順・SIMA内の点順に出力します。列は「点番、点名、X、Y、Z、マーク、杭種、点種、リンク、備考」の10列です。点名には表示用の杭種略称を付けず、既設点だけ備考へ<b>「既設点」</b>を入れます。文字コードはShift-JISです。</p>
   <h3>配置について</h3>
   <p>GPSはブラウザの仕様上、HTTPSで開いた場合のみ動作します。<b>本ファイル（index.html）と sw.js の2つを同じフォルダに置いてください。</b></p>
   <p>更新したときは、電波のある場所で<b>2回開く</b>と新しい版に切り替わります（1回目は旧版を出しつつ裏で取得、2回目で切替）。ヘッダーの版数で確認できます。</p>
@@ -556,14 +558,14 @@
 /* 版の表示はここ1か所から。ヘッダー・使い方・保存状態・PWA名すべてこれを使う */
 const APP_NAME    = '境界復元';
 const APP_EDITION = '地図版';
-const APP_VERSION = 'v0.3';
+const APP_VERSION = 'v0.5';
 const APP_BUILD   = '@@BUILD@@';          // ビルド時に日付と版ハッシュが入る
 function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
 function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
 
 const DEFAULT_SETTINGS = {
   zone:1, mockGps:false, colorMode:'auto', mockDate:null, worker:'',
-  stake:'コンクリート杭', stakes:null, stakesVer:2,
+  stake:'コンクリート杭', stakes:null, stakesVer:4,
   baseMap:'std', lastView:null, tiffAlpha:1, fontScale:'m',
   lastExport:null, setVer:1,
   thinPt:300,      // 画面内の点がこれを超えたら「線と粒」だけにする
@@ -606,20 +608,36 @@ const TOUCH_HIT_RADIUS = (navigator.maxTouchPoints>0 ||
   (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) ? 44 : 32;
 
 /* ================= 杭種 =================
-   打設・既設を記録するときに選ぶ。点名は作らないので略字は持たない。 */
-const DEFAULT_STAKES = ['コンクリート杭','プラスチック杭','金属鋲','金属標','金属プレート'];
+   点名そのものは変えず、打設・既設の表示時だけ杭種の略称を末尾に付ける。 */
+const STAKES_VERSION = 4;
+const DEFAULT_STAKES = ['コンクリート杭','プラスチック杭','金属鋲','金属標','アルミプレート','ペンキ'];
+const STAKE_ABBR = Object.freeze({
+  'プラスチック杭':'P', '金属鋲':'B', '金属標':'K',
+  'アルミプレート':'L', 'ペンキ':'M', 'コンクリート杭':'C'
+});
+function normalizeStakeName(name){
+  const s=String(name||'').trim();
+  return s==='金属プレート' ? 'アルミプレート' : s==='マーキング' ? 'ペンキ' : s;
+}
+function stakeAbbr(name){ return STAKE_ABBR[normalizeStakeName(name)] || ''; }
 function stakeList(){
   const s = store.settings.stakes;
   /* 選点地図版の杭種はオブジェクト配列。保存先が衝突していた旧版でそれを
      読むと「[object Object]」と表示されたため、文字列以外は既定値へ戻す。 */
   const valid = Array.isArray(s) && s.length
     && s.every(v=>typeof v==='string' && v.trim());
-  if(store.settings.stakesVer!==2 || !valid){
+  if(!valid || ![2,3,STAKES_VERSION].includes(store.settings.stakesVer)){
     store.settings.stakes = DEFAULT_STAKES.slice();
-    store.settings.stakesVer = 2;
+    store.settings.stakesVer = STAKES_VERSION;
     store.settings.stake = DEFAULT_STAKES[0];
   }else{
-    store.settings.stakes = [...new Set(s.map(v=>v.trim()))];
+    store.settings.stakes = [...new Set(s.map(normalizeStakeName).filter(Boolean))];
+    /* 旧版の一覧や利用者が追加した杭種は保ち、新しい「ペンキ」だけを一度追加する。 */
+    if(store.settings.stakesVer<STAKES_VERSION && !store.settings.stakes.includes('ペンキ')){
+      store.settings.stakes.push('ペンキ');
+    }
+    store.settings.stakesVer = STAKES_VERSION;
+    store.settings.stake = normalizeStakeName(store.settings.stake);
   }
   return store.settings.stakes;
 }
@@ -681,7 +699,12 @@ function stOf(p){ const r=p&&p.rec; return (r&&(r.k==='da'||r.k==='ki')) ? r.k :
 function stColor(k){ return k==='da'?disp('stDaColor') : k==='ki'?disp('stKiColor') : disp('stNoColor'); }
 function recDate(p){ return (p&&p.rec&&p.rec.d)||''; }
 function recWorker(p){ return (p&&p.rec&&p.rec.w)||''; }
-function recStake(p){ return (p&&p.rec&&p.rec.s)||''; }
+function recStake(p){ return normalizeStakeName((p&&p.rec&&p.rec.s)||''); }
+function displayPointName(p){
+  const name=String((p&&p.name)||'');
+  const abbr=stOf(p)==='no' ? '' : stakeAbbr(recStake(p));
+  return name+abbr;
+}
 function progCounts(){
   let da=0, ki=0, no=0;
   for(const p of store.points){ const k=stOf(p); if(k==='da') da++; else if(k==='ki') ki++; else no++; }
@@ -703,9 +726,9 @@ function setRec(id, kind, stake){
   if(!p) return;
   if(kind!=='da' && kind!=='ki') return;
   applyRec(p, { k:kind, d:todayStr(), w:(store.settings.worker||'').trim(),
-                s:stake||currentStake(), t:Date.now() });
+                s:normalizeStakeName(stake||currentStake()), t:Date.now() });
   const c = progCounts();
-  toast(`${p.name} を ${ST_NAME[kind]} にしました（打設${c.da}／既設${c.ki}）`);
+  toast(`${displayPointName(p)} を ${ST_NAME[kind]} にしました（打設${c.da}／既設${c.ki}）`);
 }
 function clearRec(id){
   const p = ptById(id);
@@ -1114,6 +1137,10 @@ function applyLoaded(d){
   Object.assign(store.settings, d.settings||{});
   Object.assign(store.layers, d.layers||{});
   store.points   = d.points||[];
+  for(const p of store.points){
+    if(p&&p.rec&&p.rec.s) p.rec.s=normalizeStakeName(p.rec.s);
+    if(p&&p.stake) p.stake=normalizeStakeName(p.stake);
+  }
   store.refPoints= d.refPoints||[];
   store.lines    = d.lines||[];
   store.routes   = d.routes||[];
@@ -1401,7 +1428,7 @@ function draw(){
       if(k==='no'){ ctx.fillStyle='#fff'; ctx.strokeStyle=col; }
       else        { ctx.fillStyle=col;    ctx.strokeStyle='#fff'; }
       ctx.beginPath(); ctx.arc(x,y,pr,0,7); ctx.fill(); ctx.stroke();
-      if(dm==='name') labelNoOverlap(x, y-pr-6, p.name, k==='no'?'#5a6068':col, nf);
+      if(dm==='name') labelNoOverlap(x, y-pr-6, displayPointName(p), k==='no'?'#5a6068':col, nf);
     }
   }
   /* --- 距離（線の上に、線に沿って）---
@@ -2590,7 +2617,7 @@ function routeLength(ids){
 }
 function routeLabel(r){
   const idx=ptIndex();
-  return (r.ptIds||[]).map(id=>{ const p=idx.get(id); return p?p.name:'?'; }).join('－');
+  return (r.ptIds||[]).map(id=>{ const p=idx.get(id); return p?displayPointName(p):'?'; }).join('－');
 }
 function undoRoutePt(){ state.currentRoute.pop(); updateActionbar(); draw(); }
 function cancelRoute(){ state.currentRoute=[]; updateActionbar(); draw(); }
@@ -2689,6 +2716,8 @@ const RIBBON = [
           {ic:'🗓', t:'擬似日付', fn:"openMockDate()", on:'mockDate'} ]},
     ]},
   { id:'data', label:'データ', icon:'💾', mode:'view', groups:[
+      { label:'出力', items:[
+          {ic:'📄', t:'復元点CSV', fn:"exportRestorationCsv()", sub:'bpCount'} ]},
       { label:'控え', items:[
           {ic:'📤', t:'保存', fn:"exportJson()", sub:'backup'},
           {ic:'📥', t:'控えを読む', fn:"pickMerge()"},
@@ -2901,7 +2930,7 @@ function delStake(i){
 function resetStakes(){
   if(!confirm('杭種の一覧を初期値に戻しますか?')) return;
   store.settings.stakes=DEFAULT_STAKES.slice();
-  store.settings.stakesVer=2;
+  store.settings.stakesVer=STAKES_VERSION;
   store.settings.stake=DEFAULT_STAKES[0];
   save(); openStakes(); updateActionbar();
 }
@@ -3023,7 +3052,7 @@ function renderRec(){
   const [X,Y]=pointToXY(p);
   const cur=stOf(p);
   const plot=plotNameOf(p);
-  document.getElementById('recTitle').textContent = p.name;
+  document.getElementById('recTitle').textContent = displayPointName(p);
   /* 杭種を先に選び、［打設］［既設］を押した時点で記録して閉じる。
      現場では何百点も入れるので、押す回数を「点 → 打設」の2回で済ませる。 */
   document.getElementById('recBody').innerHTML = `
@@ -3065,7 +3094,7 @@ function recCancel(){
   const id=recPickId;
   const p=ptById(id);
   if(!p) return;
-  if(!confirm(`${p.name} の記録を取り消しますか?\n\n${ST_NAME[stOf(p)]}　${dateLabel(recDate(p))}`
+  if(!confirm(`${displayPointName(p)} の記録を取り消しますか?\n\n${ST_NAME[stOf(p)]}　${dateLabel(recDate(p))}`
     + `${recWorker(p)?`\n記録者: ${recWorker(p)}`:''}`)) return;
   clearRec(id);
   closePanel('recPanel');
@@ -3164,7 +3193,7 @@ function openList(kind){
     return `<div class="listRow">
       <span class="swatch" style="background:${k==='no'?'#fff':stColor(k)};border-color:${stColor(k)};"></span>
       <span style="flex:1;min-width:0;">
-        <b>${esc(p.name)}</b> <span class="stChip ${k}">${ST_NAME[k]}</span>
+        <b>${esc(displayPointName(p))}</b> <span class="stChip ${k}">${ST_NAME[k]}</span>
         <span class="coords" style="display:block;">X:${X.toFixed(3)}　Y:${Y.toFixed(3)}</span>
         ${plot?`<span class="coords" style="display:block;">${esc(plot)}</span>`:''}
         ${k!=='no'?`<span class="coords" style="display:block;">${dateLabel(recDate(p))}　${esc(recStake(p))}${recWorker(p)?`　${esc(recWorker(p))}`:''}</span>`:''}</span>
@@ -3256,7 +3285,7 @@ function fitToPoint(id){
   state.view.cx=p.x; state.view.cy=p.y;
   state.view.scale=clampScale(Math.max(state.view.scale, 20));
   state.follow=false; updateFollowBtn(); draw();
-  toast(`${p.name} へ移動しました`);
+  toast(`${displayPointName(p)} へ移動しました`);
 }
 function fitToBox(xs,ys){
   if(!xs.length) return;
@@ -3504,7 +3533,7 @@ function parseSimaFull(text){
   }
   return { pts, plots:plots.filter(p=>p.verts.length>=2) };
 }
-/* CSV: 点名,X(北),Y(東),Z,属性,杭種 */
+/* CSV: 旧6列（点名,X,Y,Z,属性,杭種）と、境界復元アプリ出力の10列に対応 */
 function parseCsvText(text){
   const pts=[];
   for(const raw of text.split(/\r?\n/)){
@@ -3512,11 +3541,14 @@ function parseCsvText(text){
     if(!line) continue;
     const f=splitCsvLine(line);
     if(f.length<3) continue;
-    const X=parseFloat(f[1]), Y=parseFloat(f[2]);
+    const extended=f.length>=10;
+    const X=parseFloat(f[extended?2:1]), Y=parseFloat(f[extended?3:2]);
     if(!isFinite(X)||!isFinite(Y)) continue;
-    const Z=parseFloat(f[3]);
-    pts.push({ no:String(pts.length+1), name:(f[0]||'').trim()||String(pts.length+1),
-               X, Y, z:isFinite(Z)?Z:0, stake:(f[5]||'').trim() });
+    const Z=parseFloat(f[extended?4:3]);
+    const no=extended?(f[0]||'').trim():String(pts.length+1);
+    const name=(f[extended?1:0]||'').trim()||no||String(pts.length+1);
+    pts.push({ no, name, X, Y, z:isFinite(Z)?Z:0,
+               stake:normalizeStakeName((f[extended?6:5]||'').trim()) });
   }
   return { pts, plots:[] };
 }
@@ -3614,6 +3646,7 @@ function commitImport(){
   parsed.pts.forEach((r,i)=>{
     const m=xyToMapPoint(r.X, r.Y);
     const p={ id:uid(), impId:imp.id, no:r.no, name:r.name, x:m.x, y:m.y, z:r.z||0, idx:i };
+    if(r.stake) p.stake=normalizeStakeName(r.stake);
     if(kind==='ref') p.ref=true;
     target.push(p);
     if(r.no && !byNo.has(r.no)) byNo.set(r.no, p.id);
@@ -3676,6 +3709,53 @@ function delImport(id){
   invalidatePtMap(); invalidatePlotMap();
   save(); draw(); updateListCount(); refreshEdits();
   toast(`「${imp.name}」を削除しました`);
+}
+
+/* ================= 復元点CSV出力 =================
+   ヘッダーなし、Shift-JIS。取込ファイル順、その中ではSIMAのA01順（idx）で出す。
+   列: 点番, 点名, X, Y, Z, マーク, 杭種, 点種, リンク, 備考 */
+const RESTORATION_CSV_MARK = '12,1.0,1,1';
+function csvNum(v){
+  let n=+v; if(!isFinite(n)) n=0;
+  let t=n.toFixed(3).replace(/0+$/,'').replace(/\.$/,'');
+  return t==='-0' ? '0' : t;
+}
+function csvCell(v){
+  const t=String(v==null?'':v);
+  return /[",\r\n]/.test(t) ? '"'+t.replace(/"/g,'""')+'"' : t;
+}
+function restorationCsvPoints(){
+  const impOrder=new Map(store.imports.map((x,i)=>[x.id,i]));
+  const sourceOrder=new Map(store.points.map((p,i)=>[p.id,i]));
+  return store.points.slice().sort((a,b)=>{
+    const ai=impOrder.has(a.impId)?impOrder.get(a.impId):Number.MAX_SAFE_INTEGER;
+    const bi=impOrder.has(b.impId)?impOrder.get(b.impId):Number.MAX_SAFE_INTEGER;
+    if(ai!==bi) return ai-bi;
+    const ax=Number.isFinite(+a.idx)?+a.idx:sourceOrder.get(a.id);
+    const bx=Number.isFinite(+b.idx)?+b.idx:sourceOrder.get(b.id);
+    return ax-bx;
+  });
+}
+function buildRestorationCsv(points){
+  const rows=(points||restorationCsvPoints()).map(p=>{
+    const [X,Y]=pointToXY(p);
+    const stake=recStake(p)||normalizeStakeName(p.stake||'');
+    return [p.no||'',p.name||'',csvNum(X),csvNum(Y),csvNum(p.z||0),
+      RESTORATION_CSV_MARK,stake,'','',stOf(p)==='ki'?'既設点':'']
+      .map(csvCell).join(',');
+  });
+  return rows.length ? rows.join('\r\n')+'\r\n' : '';
+}
+function toSjis(text){
+  return new Uint8Array(Encoding.convert(Encoding.stringToCode(text),'SJIS','UNICODE'));
+}
+function exportRestorationCsv(){
+  const points=restorationCsvPoints();
+  if(!points.length){ alert('出力する境界点がありません。'); return false; }
+  const csv=buildRestorationCsv(points);
+  download(new Blob([toSjis(csv)],{type:'text/csv'}), `境界復元_復元点_${todayStr()}.csv`);
+  toast(`復元点 ${points.length}点をCSVで出力しました`);
+  return true;
 }
 
 /* ================= 控え（JSON） ================= */
@@ -3767,6 +3847,8 @@ function mergeStore(d){
   for(const x of (d.imports||[])){ if(iid.has(x.id)) continue; store.imports.push(x); iid.add(x.id); r.addI++; }
   const pid=new Map(store.points.map(p=>[p.id,p]));
   for(const p of (d.points||[])){
+    if(p&&p.rec&&p.rec.s) p.rec.s=normalizeStakeName(p.rec.s);
+    if(p&&p.stake) p.stake=normalizeStakeName(p.stake);
     const cur=pid.get(p.id);
     if(cur){
       r.skipP++;
