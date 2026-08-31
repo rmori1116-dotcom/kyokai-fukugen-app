@@ -203,7 +203,7 @@
     <input id="setThinName" type="number" min="10" max="5000" step="10"><span style="color:#888;font-size:13px;">点</span></div>
   <div class="formRow"><label>距離を出す長さ</label>
     <input id="setThinDist" type="number" min="10" max="400" step="5"><span style="color:#888;font-size:13px;">px</span></div>
-  <p style="font-size:12.5px;color:#888;margin-bottom:8px;">画面に入っている点が「点を出す上限」を超えているときは<b>線と色の粒だけ</b>にします。「距離を出す長さ」は、画面の上でその長さ以上に見えている辺にだけ距離を出す、という意味です。</p>
+  <p style="font-size:12.5px;color:#888;margin-bottom:8px;">画面に入っている点が「点を出す上限」を超えているときは<b>点だけ表示</b>（小さな色の点。点名は出しません）にします。「距離を出す長さ」は、画面の上でその長さ以上に見えている辺にだけ距離を出す、という意味です。</p>
   <button type="button" class="saveBtn" onclick="saveSettings()">保存</button>
 </div></div>
 
@@ -252,7 +252,7 @@
   <div id="plotNameLayers"></div>
   <h3 style="font-size:14.5px;margin:12px 0 6px;color:#1e3a5f;">取り込んだファイル</h3>
   <div id="importLayers"></div>
-  <p style="font-size:12.5px;color:#888;margin-top:10px;">非表示の点はタップでも選べません。<b>画面に入っている点が多いときは、点は自動で粒だけになります</b>（［各種設定］で変えられます）。</p>
+  <p style="font-size:12.5px;color:#888;margin-top:10px;">非表示の点はタップでも選べません。<b>画面に入っている点が多いときは、自動で「点だけ表示」になります</b>（［各種設定］で変えられます）。</p>
 </div></div>
 
 <!-- 画面の表示設定 -->
@@ -425,7 +425,7 @@
   <p>数千点を一度に描くと重くなり、文字も潰れて読めません。そこで<b>画面に入っている点数で自動的に切り替えます</b>。</p>
   <table>
     <tr><th>画面内の点数</th><th>出るもの</th></tr>
-    <tr><td>上限より多い（初期値 300点超）</td><td>線と<b>色の粒</b>だけ。どこまで打ったかは色の広がりで分かります</td></tr>
+    <tr><td>上限より多い（初期値 300点超）</td><td><b>点だけ表示</b>。小さな色の点になり、点名は出ません。どこまで打ったかは色の広がりで分かります</td></tr>
     <tr><td>上限以下</td><td>線＋点（打設＝赤／既設＝青／未＝灰）</td></tr>
     <tr><td>点名の上限以下（初期値 150点）</td><td>さらに点名</td></tr>
   </table>

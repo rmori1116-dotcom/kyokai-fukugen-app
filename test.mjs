@@ -56,7 +56,7 @@ await page.waitForTimeout(300);
 
 /* ---------- 1. 起動 ---------- */
 ok('起動時にエラーが出ない', errors.length === 0, errors.slice(0, 3));
-eq('版数', await page.evaluate(() => APP_VERSION), 'v0.7');
+eq('版数', await page.evaluate(() => APP_VERSION), 'v0.8');
 eq('アプリ名', await page.evaluate(() => APP_NAME), '境界復元');
 eq('専用IndexedDB名', await page.evaluate(() => DB_NAME), 'kyokaiFukugenMap');
 eq('専用localStorage名', await page.evaluate(() => LS_KEY), 'kyokaiFukugenMapData_v1');
@@ -249,7 +249,7 @@ const modes = await page.evaluate(() => {
   state.view.scale = 40; draw(); out.near = state.drawInfo.mode;
   return out;
 });
-eq('全体表示は粒だけ', modes.all, 'dot');
+eq('全体表示は点だけ表示', modes.all, 'dot');
 eq('全体では2397点が画面内', modes.allN, 2397);
 eq('十分に拡大すると点名まで出る', modes.near, 'name');
 const thinPt = await page.evaluate(() => {
@@ -260,7 +260,7 @@ const thinPt = await page.evaluate(() => {
   return { a, b: state.drawInfo.mode };
 });
 eq('上限を上げれば全体でも点名が出る', thinPt.a, 'name');
-eq('上限を戻せば粒に戻る', thinPt.b, 'dot');
+eq('上限を戻せば点だけ表示に戻る', thinPt.b, 'dot');
 
 /* ---------- 11. 打設 / 既設 の記録 ---------- */
 const rec = await page.evaluate(() => {

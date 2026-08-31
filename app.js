@@ -2,7 +2,7 @@
 /* 版の表示はここ1か所から。ヘッダー・使い方・保存状態・PWA名すべてこれを使う */
 const APP_NAME    = '境界復元';
 const APP_EDITION = '地図版';
-const APP_VERSION = 'v0.7';
+const APP_VERSION = 'v0.8';
 const APP_BUILD   = '@@BUILD@@';          // ビルド時に日付と版ハッシュが入る
 function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
 function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
@@ -12,7 +12,7 @@ const DEFAULT_SETTINGS = {
   stake:'コンクリート杭', stakes:null, stakesVer:4,
   baseMap:'std', lastView:null, tiffAlpha:1, fontScale:'m',
   lastExport:null, setVer:1,
-  thinPt:300,      // 画面内の点がこれを超えたら「線と粒」だけにする
+  thinPt:300,      // 画面内の点がこれを超えたら「線と点」だけにする（点名・マークを出さない）
   thinName:150,    // 画面内の点がこれ以下なら点名も出す
   thinDist:40      // 画面上でこのpx以上に見えている辺にだけ距離を出す
 };
@@ -697,7 +697,7 @@ async function showStorageInfo(){
 /* ================= 描画 =================
    下から順に: 背景地図 → 図面 → 手書きメモ → 画地の線 → 計測線 → 距離 →
                基準点 → 境界点 → 現在地
-   点が多いときは、まず画面に入っている数を数えて出し方を決める（線と粒だけ／点／点名つき）。 */
+   点が多いときは、まず画面に入っている数を数えて出し方を決める（点だけ／点／点名つき）。 */
 function inView(sx,sy,m){ const k=m||30; return sx>=-k && sx<=W+k && sy>=-k && sy<=H+k; }
 function visiblePointCount(){
   let n=0;
@@ -1047,7 +1047,7 @@ function labelNoOverlap(x,y,text,color,px){
   if(!placeLabel(x, y-h/2, w+4, h+2)) return;
   label(x,y,text,color,px);
 }
-/* 画面右上の案内（点を粒にしているとき・航空写真の限界を超えたとき） */
+/* 画面右上の案内（点だけ表示にしているとき・航空写真の限界を超えたとき） */
 function updateHint(){
   const el=document.getElementById('fixBar');
   if(!el) return;
@@ -1061,7 +1061,7 @@ function updateHint(){
       msgs.push(`もっと拡大すると出ます<span class="sub">${esc(def.name)}</span>`);
   }
   if(state.drawInfo.mode==='dot' && state.drawInfo.n)
-    msgs.push(`粒だけ表示（${state.drawInfo.n}点）<span class="sub">拡大すると点名まで出ます</span>`);
+    msgs.push(`点だけ表示（${state.drawInfo.n}点）<span class="sub">拡大すると点名まで出ます</span>`);
   if(!msgs.length){ el.style.display='none'; el.innerHTML=''; return; }
   el.style.display='block';
   el.style.background='rgba(30,58,95,.90)';
