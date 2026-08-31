@@ -56,7 +56,7 @@ await page.waitForTimeout(300);
 
 /* ---------- 1. 起動 ---------- */
 ok('起動時にエラーが出ない', errors.length === 0, errors.slice(0, 3));
-eq('版数', await page.evaluate(() => APP_VERSION), 'v0.9');
+eq('版数', await page.evaluate(() => APP_VERSION), 'v0.10');
 eq('アプリ名', await page.evaluate(() => APP_NAME), '境界復元');
 eq('専用IndexedDB名', await page.evaluate(() => DB_NAME), 'kyokaiFukugenMap');
 eq('専用localStorage名', await page.evaluate(() => LS_KEY), 'kyokaiFukugenMapData_v1');
@@ -1063,6 +1063,119 @@ eq('取込ファイル自体は3件になる', plotPerFile.importsAfterRef, 3);
 ok('レイヤ画面の地番名の節に2ファイル出る',
    plotPerFile.panel.includes('図面A') && plotPerFile.panel.includes('図面B'), plotPerFile.panel.slice(0, 120));
 ok('地番名の節に基準点は出ない', !plotPerFile.panel.includes('基準点'), plotPerFile.panel.slice(0, 160));
+
+/* ---------- 21h2. レイヤごとの色 ---------- */
+const layerColor = await page2.evaluate(() => {
+  /* 21h のあと：図面A・図面B（画地あり）と 基準点（画地なし）が入っている */
+  const a = store.imports.find(i => i.name === '図面A').id;
+  const b = store.imports.find(i => i.name === '図面B').id;
+  const ref = store.imports.find(i => i.name === '基準点').id;
+  store.layers.hiddenImports = []; store.layers.hiddenPlotNames = [];
+  store.layers.plotName = true;
+  fitToBox(store.points.map(p => p.x), store.points.map(p => p.y));
+
+  /* 実際に描くときの色を横取りする（線＝stroke、点＝fill） */
+  const orgStroke = ctx.stroke, orgFill = ctx.fill;
+  let strokes = [], fills = [];
+  ctx.stroke = function () { strokes.push(String(ctx.strokeStyle)); return orgStroke.apply(ctx, arguments); };
+  ctx.fill   = function () { fills.push(String(ctx.fillStyle));   return orgFill.apply(ctx, arguments); };
+  const orgPlot = window.drawPlotName;
+  let plotCols = [];
+  window.drawPlotName = (cx, cy, t, px, col) => { plotCols.push(String(col || '')); };
+  const run = () => { strokes = []; fills = []; plotCols = []; draw(); };
+
+  const out = {};
+  const lineDef = disp('lineColor'), nameDef = disp('plotNameColor');
+  out.noColorAtFirst = [a, b, ref].every(i => impColor(i) === null);
+  run();
+  out.defStroke = strokes.includes(lineDef);
+  out.defPlot = plotCols.every(c => c === nameDef);
+
+  /* 図面Aだけ赤にする */
+  setImpColor(a, '#ff0000');
+  out.setA = impColor(a);
+  out.bUntouched = impColor(b);
+  out.lineColorOfA = store.lines.filter(l => l.impId === a).every(l => lineColorOf(l) === '#ff0000');
+  out.lineColorOfB = store.lines.filter(l => l.impId === b).every(l => lineColorOf(l) === lineDef);
+  out.plotColorOfA = store.lines.filter(l => l.impId === a).every(l => plotNameColorOf(l) === '#ff0000');
+  run();
+  out.drawsRed = strokes.includes('#ff0000');
+  out.drawsDefToo = strokes.includes(lineDef);
+  out.plotRed = plotCols.filter(c => c === '#ff0000').length;
+  out.plotDef = plotCols.filter(c => c === nameDef).length;
+  /* 境界点は打設・既設・未の色のまま（ファイル色にしない） */
+  out.pointsKeepState = fills.includes(disp('stNoColor'));
+  out.pointsNotRed = store.points.filter(p => p.impId === a).length > 0;
+
+  /* おかしな値は受け付けない */
+  setImpColor(a, 'あか');
+  out.afterBad = impColor(a);
+
+  /* 保存の中身に色が入る */
+  out.inSite = ((JSON.parse(siteJson()).imports || []).find(i => i.id === a) || {}).color;
+
+  /* 戻す */
+  clearImpColor(a);
+  out.afterClear = impColor(a);
+  run();
+  out.backToDef = !strokes.includes('#ff0000') && strokes.includes(lineDef);
+
+  /* レイヤ画面：種類ごとの色と、ファイルごとの色 */
+  setImpColor(b, '#00aa00');
+  openLayers();
+  const panel = document.getElementById('layerPanel');
+  out.colInputs = panel.querySelectorAll('input.layerCol[type=color]').length;
+  out.otherCols = document.getElementById('otherLayers').querySelectorAll('input[type=color]').length;
+  out.stateCols = document.getElementById('stateLayers').querySelectorAll('input[type=color]').length;
+  out.impCols = document.getElementById('importLayers').querySelectorAll('input[type=color]').length;
+  out.nameCols = document.getElementById('plotNameLayers').querySelectorAll('input[type=color]').length;
+  out.nameSwatch = document.getElementById('plotNameLayers').querySelectorAll('span.layerCol').length;
+  out.resetBtn = document.getElementById('importLayers').textContent.includes('表示設定」に戻す');
+  /* レイヤ画面から種類ごとの色を変えると、その場の見た目もそろう */
+  setDisp('lineColor', '#010203');
+  const lineInput = [...document.getElementById('otherLayers').querySelectorAll('input[type=color]')]
+    .find(el => (el.getAttribute('title') || '').includes('画地の線'));
+  out.lineInputVal = lineInput ? lineInput.value : null;
+  out.dispAfter = disp('lineColor');
+  run();
+  out.drawsNewDef = strokes.includes('#010203');
+  out.stillGreen = strokes.includes('#00aa00');
+  setDisp('lineColor', DEFAULT_DISP.lineColor);
+  clearImpColor(b);
+  closePanel('layerPanel');
+
+  ctx.stroke = orgStroke; ctx.fill = orgFill; window.drawPlotName = orgPlot;
+  draw();
+  return out;
+});
+eq('はじめはファイルごとの色なし', layerColor.noColorAtFirst, true);
+eq('既定では種類ごとの色で線を引く', layerColor.defStroke, true);
+eq('既定では地番名も種類ごとの色', layerColor.defPlot, true);
+eq('ファイルに色を付けられる', layerColor.setA, '#ff0000');
+eq('もう片方のファイルは変わらない', layerColor.bUntouched, null);
+eq('色を付けたファイルの線はその色', layerColor.lineColorOfA, true);
+eq('付けていないファイルの線は種類ごとの色', layerColor.lineColorOfB, true);
+eq('色は地番名にも効く', layerColor.plotColorOfA, true);
+eq('地図に実際その色で引かれる', layerColor.drawsRed, true);
+eq('もう片方は既定の色のまま引かれる', layerColor.drawsDefToo, true);
+ok('地番名もその色で出る', layerColor.plotRed > 0, layerColor.plotRed);
+ok('もう片方の地番名は既定の色', layerColor.plotDef > 0, layerColor.plotDef);
+eq('境界点は状態の色のまま', layerColor.pointsKeepState, true);
+eq('おかしな色は受け付けない', layerColor.afterBad, '#ff0000');
+eq('色は現場の保存に入る', layerColor.inSite, '#ff0000');
+eq('色を戻せる', layerColor.afterClear, null);
+eq('戻すと既定の色で引かれる', layerColor.backToDef, true);
+ok('レイヤ画面に色のボタンが並ぶ', layerColor.colInputs >= 9, layerColor.colInputs);
+eq('種類ごとの色は5つ（線・地番名・計測線・距離・基準点）', layerColor.otherCols, 5);
+eq('状態の色は3つ（打設・既設・未）', layerColor.stateCols, 3);
+eq('画地を持つファイルにだけ色を出す', layerColor.impCols, 2);
+eq('地番名の節では色を変えさせない（決めるのはファイルの節）', layerColor.nameCols, 0);
+eq('地番名の節にはその色を見せる', layerColor.nameSwatch, 2);
+eq('色を付けたファイルには戻すボタンが出る', layerColor.resetBtn, true);
+eq('レイヤ画面から種類ごとの色を変えられる', layerColor.dispAfter, '#010203');
+eq('変えた色が画面にも反映される', layerColor.lineInputVal, '#010203');
+eq('変えた色で線が引かれる', layerColor.drawsNewDef, true);
+eq('ファイルごとの色は種類ごとの色より優先', layerColor.stillGreen, true);
 
 /* ---------- 21i. 現場（プロジェクト）別保存 ---------- */
 const siteBasics = await page2.evaluate(async bytes => {

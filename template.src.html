@@ -33,6 +33,10 @@
     text-overflow:ellipsis; border:none; border-radius:9px; padding:3px 9px;
     background:rgba(255,255,255,.2); color:#fff; font-size:11.5px; font-weight:bold; }
   #siteChip:active { background:rgba(255,255,255,.34); }
+  /* レイヤ画面の色。押すと色を選べる（見えている四角がそのまま地図の色） */
+  .listRow input.layerCol, .layerCol { flex:none; width:42px; height:42px; min-height:42px;
+    padding:2px; border:1px solid #cfd6de; border-radius:8px; background:#fff; }
+  .layerCol.noCol { border:1px dashed #e8ecf1; background:transparent; }
   .siteRow { border:1px solid #dfe4ea; border-radius:10px; padding:10px 12px; margin-bottom:8px; }
   .siteRow.on { border-color:#1e73d2; background:#f2f7fe; }
   .siteRow .nm { font-size:calc(var(--fsForm) + 1px); font-weight:bold; color:#1e3a5f; }
@@ -244,13 +248,15 @@
   <div style="display:flex;gap:8px;margin-bottom:10px;">
     <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;" onclick="showAllLayers()">すべて表示</button>
   </div>
+  <p style="font-size:12.5px;color:#888;margin:-2px 0 8px;">四角い色を押すと、その場で色を変えられます。</p>
   <div id="otherLayers"></div>
   <h3 style="font-size:14.5px;margin:12px 0 6px;color:#1e3a5f;">状態でしぼる</h3>
   <div id="stateLayers"></div>
   <h3 style="font-size:14.5px;margin:12px 0 6px;color:#1e3a5f;">地番名</h3>
-  <p style="font-size:12.5px;color:#888;margin:-2px 0 6px;">取り込んだファイルごとに、地図へ出す地番名を切り替えます。上の「画地名（地番）」が非表示のときは、どれも出ません。</p>
+  <p style="font-size:12.5px;color:#888;margin:-2px 0 6px;">取り込んだファイルごとに、地図へ出す地番名を切り替えます。上の「画地名（地番）」が非表示のときは、どれも出ません。色は下の<b>「取り込んだファイル」</b>で決めます（ファイル1件につき<b>線と地番名で1色</b>）。ここに出ているのは、その地番名の色です。</p>
   <div id="plotNameLayers"></div>
   <h3 style="font-size:14.5px;margin:12px 0 6px;color:#1e3a5f;">取り込んだファイル</h3>
+  <p style="font-size:12.5px;color:#888;margin:-2px 0 6px;">ファイルごとの色は<b>画地の線と地番名</b>に効きます。境界点は打設・既設・未の色のままなので、どこまで打ったかは色で分かります。</p>
   <div id="importLayers"></div>
   <p style="font-size:12.5px;color:#888;margin-top:10px;">非表示の点はタップでも選べません。<b>画面に入っている点が多いときは、自動で「点だけ表示」になります</b>（［各種設定］で変えられます）。</p>
 </div></div>
@@ -411,7 +417,16 @@
     <li>横書きなので、内側の<b>横に広く空いているところ</b>を選びます。細長い画地では真ん中から少しずれることがあります。</li>
     <li>名前どうしが重なるときは、内側の<b>別の空いているところ</b>へずらします。それでも場所が無いときは出しません。線が閉じていない画地だけは、これまでどおり<b>線の上</b>に出ます。</li>
     <li><b>取り込んだファイルごとに出す／出さないを切り替えられます。</b>「確認」タブの［レイヤ］→<b>「地番名」</b>の節に、画地の入っているファイルが並びます（線そのものは消えません）。</li>
-    <li>色と大きさは「計測」タブの<b>［線の表示］</b>で変えられます。</li>
+    <li>色と大きさは「計測」タブの<b>［線の表示］</b>で変えられます。色は［レイヤ］画面でも直接変えられます。</li>
+  </ul>
+  <h3>色を変える</h3>
+  <p>色は<b>2とおり</b>の変え方があります。どちらも「画面の見た目だけ」で、記録の中身や取り込んだ座標は変わりません。<b>現場ごとに別</b>に持ちます。</p>
+  <ul>
+    <li><b>種類ごとの色</b> … 境界点（打設・既設・未）／画地の線／地番名／計測線／距離／基準点。「確認」タブの<b>［レイヤ］</b>画面で、各行の四角い色を押せばその場で変えられます（「計測」タブの［線の表示］・「復元」タブの［点の表示］でも同じことができます）。</li>
+    <li><b>取り込んだファイルごとの色</b> … ［レイヤ］画面いちばん下の<b>「取り込んだファイル」</b>で、ファイル1件ごとに色を決められます。<b>効くのは画地の線と地番名だけ</b>です。隣り合う地区の画地を2つ取り込んだときに、どちらの線かが色で分かります。</li>
+    <li>境界点は<b>いつも打設（赤）・既設（青）・未（灰）の色</b>です。ファイルごとの色にはしません。どこまで打ったかが色で分かることを優先しているためです。</li>
+    <li>ファイルの色を決めると、その行の下に<b>［このファイルの色を「表示設定」に戻す］</b>が出ます。押すと種類ごとの色に戻ります。</li>
+    <li>はじめは全ファイルとも種類ごとの色（画地の線は紫）です。色を付けたファイルだけ変わります。</li>
   </ul>
   <h3>距離を見る</h3>
   <p><b>距離は独立したレイヤ</b>です。「確認」タブの［レイヤ］→<b>「距離」</b>で表示／非表示を切り替えられます。</p>

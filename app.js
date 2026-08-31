@@ -2,7 +2,7 @@
 /* 版の表示はここ1か所から。ヘッダー・使い方・保存状態・PWA名すべてこれを使う */
 const APP_NAME    = '境界復元';
 const APP_EDITION = '地図版';
-const APP_VERSION = 'v0.9';
+const APP_VERSION = 'v0.10';
 const APP_BUILD   = '@@BUILD@@';          // ビルド時に日付と版ハッシュが入る
 function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
 function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
@@ -247,6 +247,18 @@ function isPlotNameVisible(l){
 }
 /* 画地（線）を持っている取込ファイルだけが、地番名の切り替えの対象になる */
 function importsWithLines(){ return store.imports.filter(i=>linesOf(i.id).length>0); }
+/* ---- 取込ファイルごとの色 ----
+   imp.color を入れると、そのファイルの**画地の線と地番名**だけがその色になる。
+   入れていなければ「表示設定」の種類別の色をそのまま使う。
+   境界点そのものは打設（赤）・既設（青）・未（灰）の色を保つ。
+   どこまで打ったかが色で分かることのほうが、ファイルの区別より現場では大事なため。 */
+function isColorHex(c){ return typeof c==='string' && /^#[0-9a-fA-F]{6}$/.test(c); }
+function impColor(id){
+  const im = id && importById(id);
+  return im && isColorHex(im.color) ? im.color : null;
+}
+function lineColorOf(l){     return impColor(l.impId) || disp('lineColor'); }
+function plotNameColorOf(l){ return impColor(l.impId) || disp('plotNameColor'); }
 /* 点がどの画地に属するか（一覧のまとめ方で使う。数が多いので都度作らず控える） */
 let plotOfPt = null;
 function invalidatePlotMap(){ plotOfPt = null; }
@@ -745,7 +757,7 @@ function draw(){
   const distPx = labelFont('distSize');
   /* --- 画地の線（塗らない。同じ点を何度も通る一筆書きのため） --- */
   ctx.lineCap='round'; ctx.lineJoin='round';
-  ctx.strokeStyle=disp('lineColor'); ctx.lineWidth=+disp('lineWidth')||2;
+  ctx.lineWidth=+disp('lineWidth')||2;
   ctx.setLineDash([]);
   const distJobs=[], plotJobs=[];
   const namesOn = isPlotNameOn();
@@ -761,6 +773,7 @@ function draw(){
        vis   … 画面に見えている線。中が取れなかったときの逃げ場。 */
     const edges=[], vis=[];
     const showPlotName = namesOn && isPlotNameVisible(l);
+    ctx.strokeStyle=lineColorOf(l);      /* 取込ファイルごとの色。無ければ種類別の色 */
     ctx.beginPath();
     for(let i=0;i<segs;i++){
       const a=idx.get(ids[i]), b=idx.get(ids[(i+1)%n]);
@@ -789,7 +802,7 @@ function draw(){
       const text=plotLabelText(l);
       ctx.font='bold '+plotPx+'px sans-serif';
       const cands = plotLabelAnchors(edges, vis, plotPx, ctx.measureText(text).width);
-      if(cands.length) plotJobs.push([cands, text]);
+      if(cands.length) plotJobs.push([cands, text, plotNameColorOf(l)]);
     }
   }
   /* 画地名は数が少なく、いまどの画地を見ているかの手がかりになるので、
@@ -798,13 +811,13 @@ function draw(){
   if(namesOn && plotJobs.length){
     const px=plotPx;
     ctx.font='bold '+px+'px sans-serif';
-    for(const [cands, text] of plotJobs){
+    for(const [cands, text, col] of plotJobs){
       const w=ctx.measureText(text).width, h=px+4;
-      /* 真ん中が他のラベルで埋まっていたら、その画地自身の線の上へ逃がす */
+      /* 真ん中が他のラベルで埋まっていたら、その画地の内側の別のところへ逃がす */
       for(const at of cands){
         const cx=Math.min(W-w/2-4, Math.max(w/2+4, at[0]));
         const cy=Math.min(H-h/2-4, Math.max(h/2+4, at[1]));
-        if(placeLabel(cx, cy, w+10, h+6)){ plotDraw.push([cx, cy, text, px]); break; }
+        if(placeLabel(cx, cy, w+10, h+6)){ plotDraw.push([cx, cy, text, px, col]); break; }
       }
     }
   }
@@ -888,7 +901,7 @@ function draw(){
      場所の取り合いになったときは点名を優先して距離を落とす。 */
   for(const [A,B,t] of distJobs) drawDistLabel(A,B,t,distPx);
   /* --- 画地名（地番）--- */
-  for(const [cx,cy,text,px] of plotDraw) drawPlotName(cx,cy,text,px);
+  for(const [cx,cy,text,px,col] of plotDraw) drawPlotName(cx,cy,text,px,col);
   if(state.gps.ok){
     const [x,y]=toScr(state.gps.x,state.gps.y);
     const [ax,ay]=accToMapUnitsXY(state.gps.acc);
@@ -1018,14 +1031,14 @@ function lineFractionPoint(vis, total, f){
   return last ? [last.b[0], last.b[1]] : null;
 }
 /* 線の上に重なっても読めるよう、白い縁取りの上に書く */
-function drawPlotName(cx, cy, text, px){
+function drawPlotName(cx, cy, text, px, col){
   ctx.font='bold '+px+'px sans-serif';
   ctx.textAlign='center'; ctx.textBaseline='middle';
   const w=ctx.measureText(text).width, h=px+4;
   ctx.fillStyle='rgba(255,255,255,.78)';
   ctx.fillRect(cx-w/2-5, cy-h/2-3, w+10, h+6);
   ctx.lineWidth=3; ctx.strokeStyle='#fff'; ctx.strokeText(text, cx, cy);
-  ctx.fillStyle=disp('plotNameColor'); ctx.fillText(text, cx, cy);
+  ctx.fillStyle=col||disp('plotNameColor'); ctx.fillText(text, cx, cy);
   ctx.textBaseline='alphabetic';
 }
 
@@ -1667,24 +1680,29 @@ function resetStakes(){
 /* ================= レイヤ表示 ================= */
 function openLayers(){
   document.getElementById('layerNow').innerHTML = layerNowText();
+  /* 4つ目は色の設定キー。入っているレイヤは、この画面でそのまま色を変えられる。
+     境界点は打設・既設・未の3色があるので、下の「記録の状態」の節で変える。 */
   const rows=[
-    ['pt',   '境界点', progCounts().all+'点'],
-    ['line', '画地の線', store.lines.length+'画地'],
-    ['plotName', '画地名（地番）', store.lines.length?'画地ごとに1つ':'—'],
-    ['route','計測線', store.routes.length+'本'],
-    ['dist', '距離', store.layers.dist!==false?`辺が${Math.max(10,+store.settings.thinDist||40)}px以上のとき`:'—'],
-    ['ref',  '基準点', store.refPoints.length+'点'],
-    ['memo', '手書きメモ', store.strokes.length+'本'],
-    ['base', '図面（GeoTIFF）', tiffList().length?tiffList().length+'枚':'未読込'],
-    ['map',  '背景地図（地理院）', baseMapDef().name]
+    ['pt',   '境界点', progCounts().all+'点', null],
+    ['line', '画地の線', store.lines.length+'画地', 'lineColor'],
+    ['plotName', '画地名（地番）', store.lines.length?'画地ごとに1つ':'—', 'plotNameColor'],
+    ['route','計測線', store.routes.length+'本', 'routeColor'],
+    ['dist', '距離', store.layers.dist!==false?`辺が${Math.max(10,+store.settings.thinDist||40)}px以上のとき`:'—', 'distColor'],
+    ['ref',  '基準点', store.refPoints.length+'点', 'refColor'],
+    ['memo', '手書きメモ', store.strokes.length+'本', null],
+    ['base', '図面（GeoTIFF）', tiffList().length?tiffList().length+'枚':'未読込', null],
+    ['map',  '背景地図（地理院）', baseMapDef().name, null]
   ];
   const alpha=Math.round(tiffAlpha()*100);
-  document.getElementById('otherLayers').innerHTML = rows.map(([k,lb,info])=>{
+  document.getElementById('otherLayers').innerHTML = rows.map(([k,lb,info,ck])=>{
     const on=store.layers[k]!==false;
+    const col = ck ? `<input type="color" class="layerCol" value="${esc(disp(ck))}"
+        title="${lb}の色" aria-label="${lb}の色" onchange="setDisp('${ck}',this.value)">`
+      : '<span class="layerCol noCol"></span>';
     let row=`<div class="listRow">
       <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
         onclick="toggleLayer('${k}')">${on?'表示':'非表示'}</button>
-      <span style="flex:1">${lb}</span><span class="coords">${esc(info)}</span></div>`;
+      ${col}<span style="flex:1">${lb}</span><span class="coords">${esc(info)}</span></div>`;
     if(k==='map'){
       row+=`<div class="listRow" style="padding-top:0;">
         <span style="min-width:52px;"></span>
@@ -1706,13 +1724,16 @@ function openLayers(){
     return row;
   }).join('');
   const c=progCounts();
-  const sts=[['stDa','打設',c.da,disp('stDaColor')],['stKi','既設',c.ki,disp('stKiColor')],['stNone','未',c.no,disp('stNoColor')]];
-  document.getElementById('stateLayers').innerHTML = sts.map(([k,lb,n,col])=>{
+  const sts=[['stDa','打設',c.da,disp('stDaColor'),'stDaColor'],
+             ['stKi','既設',c.ki,disp('stKiColor'),'stKiColor'],
+             ['stNone','未',c.no,disp('stNoColor'),'stNoColor']];
+  document.getElementById('stateLayers').innerHTML = sts.map(([k,lb,n,col,ck])=>{
     const on=store.layers[k]!==false;
     return `<div class="listRow">
       <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
         onclick="toggleLayer('${k}')">${on?'表示':'非表示'}</button>
-      <span class="swatch" style="background:${col}"></span>
+      <input type="color" class="layerCol" value="${esc(col)}"
+        title="${lb}の点の色" aria-label="${lb}の点の色" onchange="setDisp('${ck}',this.value)">
       <span style="flex:1">${lb}</span><span class="coords">${n}点</span></div>`;
   }).join('');
   const withLines = importsWithLines();
@@ -1722,6 +1743,8 @@ function openLayers(){
     return `<div class="listRow">
       <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
         onclick="togglePlotNameLayer('${imp.id}')">${on?'表示':'非表示'}</button>
+      <span class="layerCol" style="background:${impColor(imp.id)||disp('plotNameColor')}"
+        title="この地番名の色"></span>
       <span style="flex:1">${esc(imp.name)}</span>
       <span class="coords">${linesOf(imp.id).length}画地${hid?'<br>ファイルが非表示':''}</span></div>`;
   }).join('') : '<p style="color:#888;font-size:14px;">画地データ入りのSIMAを取り込むと、ここに出ます</p>';
@@ -1729,14 +1752,24 @@ function openLayers(){
     const on=isImportVisible(imp.id);
     const n = imp.kind==='ref' ? refPointsOf(imp.id).length : pointsOf(imp.id).length;
     const ln= linesOf(imp.id).length;
-    return `<div class="listRow">
+    /* 色は画地の線と地番名にだけ効くので、画地を持つファイルにだけ出す */
+    const col = ln ? `<input type="color" class="layerCol" value="${esc(impColor(imp.id)||disp('lineColor'))}"
+        title="${esc(imp.name)}の線と地番名の色" aria-label="${esc(imp.name)}の線と地番名の色"
+        onchange="setImpColor('${imp.id}',this.value)">` : '<span class="layerCol noCol"></span>';
+    let row=`<div class="listRow">
       <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
         onclick="toggleImportLayer('${imp.id}')">${on?'表示':'非表示'}</button>
+      ${col}
       <span class="stChip ${imp.kind==='ref'?'no':'da'}" style="${imp.kind==='ref'?`background:${REF_STROKE};`:''}">${imp.kind==='ref'?'基準点':'境界点'}</span>
       <span style="flex:1">${esc(imp.name)}</span>
       <span class="coords">${n}点${ln?`<br>${ln}画地`:''}</span>
       <button type="button" class="del" onclick="fitToImport('${imp.id}')" title="表示範囲へ移動">⤢</button>
       <button type="button" class="del" onclick="delImport('${imp.id}')">削除</button></div>`;
+    if(ln && impColor(imp.id)) row+=`<div class="listRow" style="padding-top:0;">
+      <span style="min-width:52px;"></span>
+      <button type="button" class="del" style="flex:1;background:#e7f0fb;color:#1e3a5f;"
+        onclick="clearImpColor('${imp.id}')">このファイルの色を「表示設定」に戻す</button></div>`;
+    return row;
   }).join('') : '<p style="color:#888;font-size:14px;">まだ取り込んでいません（「準備」タブの［境界点取込］から）</p>';
   openPanel('layerPanel');
 }
@@ -1750,6 +1783,21 @@ function layerName(k){
   return {pt:'境界点',line:'画地の線',plotName:'画地名（地番）',route:'計測線',dist:'距離',ref:'基準点',
           memo:'手書きメモ',base:'図面',map:'背景地図',
           stDa:'打設',stKi:'既設',stNone:'未'}[k]||k;
+}
+/* 取込ファイルごとの色。線と地番名だけに効く（境界点は記録の状態の色のまま） */
+function setImpColor(id, v){
+  const im=importById(id); if(!im) return;
+  if(!isColorHex(v)) return;
+  im.color=v;
+  save(); draw();
+  if(panelOpen('layerPanel')) openLayers();
+}
+function clearImpColor(id){
+  const im=importById(id); if(!im) return;
+  delete im.color;
+  save(); draw();
+  if(panelOpen('layerPanel')) openLayers();
+  toast(`${im.name}の色を「表示設定」に戻しました`);
 }
 function togglePlotNameLayer(id){
   const h=store.layers.hiddenPlotNames||(store.layers.hiddenPlotNames=[]);
@@ -2001,7 +2049,7 @@ function openList(kind){
       const s=lineSegments(l);
       const nv=(l.ptIds||[]).filter(Boolean).length;
       return `<div class="listRow">
-        <span class="swatch" style="background:${disp('lineColor')}"></span>
+        <span class="swatch" style="background:${lineColorOf(l)}"></span>
         <span style="flex:1;min-width:0;"><b>${esc(l.name||('画地'+l.no))}</b>
           <span class="coords" style="display:block;">${nv}頂点　${s.n}辺　${l.closed?'閉じた線':'開いた線'}　延長 ${fmtDist(s.total)}m</span>
           ${l.lost?`<span class="coords" style="display:block;color:#b3261e;">座標が無い頂点 ${l.lost}件（その前後の辺は引いていません）</span>`:''}</span>
@@ -2111,6 +2159,8 @@ function setDisp(k,v){
   if(k==='routeWidth'||k==='lineWidth'){ const n=parseInt(v,10); v=Math.min(8,Math.max(1,isFinite(n)?n:2)); }
   store.disp[k]=v;
   save(); draw(); renderDisp();
+  /* レイヤ画面からも色を変えられるので、開いていれば見た目をそろえる */
+  if(panelOpen('layerPanel')) openLayers();
 }
 function resetDisp(){
   const def=DISP_SET[dispKind] || DISP_SET.pt;
