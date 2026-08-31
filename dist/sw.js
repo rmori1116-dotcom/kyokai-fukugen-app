@@ -2,7 +2,7 @@
    fukugen-map.html と同じフォルダに置いてください。
    アプリ本体（HTML）をキャッシュし、圏外でも起動できるようにします。 */
 'use strict';
-const CACHE = 'kyokai-fukugen-map-5d3b5068ff77';
+const CACHE = 'kyokai-fukugen-map-bde04dc27b3c';
 /* 置くファイル名（index.html / fukugen-map.html など）に依存しないよう、
    ここではフォルダのトップだけを控え、実際に開かれたURLはアプリ側から通知してもらう。 */
 const SHELL = ['./'];
