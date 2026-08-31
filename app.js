@@ -2,7 +2,7 @@
 /* 版の表示はここ1か所から。ヘッダー・使い方・保存状態・PWA名すべてこれを使う */
 const APP_NAME    = '境界復元';
 const APP_EDITION = '地図版';
-const APP_VERSION = 'v0.5';
+const APP_VERSION = 'v0.7';
 const APP_BUILD   = '@@BUILD@@';          // ビルド時に日付と版ハッシュが入る
 function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
 function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
@@ -26,8 +26,8 @@ const store = {
   strokes:  [],   // 手書きメモ {color, w(map単位), pts:[[x,y],...]}
   settings: Object.assign({}, DEFAULT_SETTINGS),
   disp: {},
-  layers: { pt:true, ref:true, line:true, route:true, dist:true, memo:true,
-            base:true, map:true, hiddenImports:[],
+  layers: { pt:true, ref:true, line:true, plotName:true, route:true, dist:true, memo:true,
+            base:true, map:true, hiddenImports:[], hiddenPlotNames:[],
             stNone:true, stDa:true, stKi:true }
 };
 const state = {
@@ -117,6 +117,7 @@ const DEFAULT_DISP = {
   stNoColor:'#8a8f96',    // 未
   ptMarkSize:'m', ptNameSize:'m',
   lineColor:'#5a3ea8', lineWidth:2,          // 画地の線
+  plotNameColor:'#3d2680', plotNameSize:'l', // 画地名（地番）の文字
   routeColor:'#e07800', routeWidth:3,        // 計測線
   distColor:'#1b3a1b', distSize:'m',         // 距離の文字
   refColor:'#39FF14', refMarkSize:'m', refNameSize:'m'
@@ -238,6 +239,14 @@ function isPointVisible(p){
 function isRefVisible(p){ return store.layers.ref!==false && isImportVisible(p.impId); }
 function isAnyPointVisible(p){ return p.ref ? isRefVisible(p) : isPointVisible(p); }
 function isLineVisible(l){ return store.layers.line!==false && isImportVisible(l.impId); }
+/* 地番名は「全体のスイッチ」と「取込ファイルごとのスイッチ」の両方が表示のときだけ出す */
+function isPlotNameOn(){ return store.layers.plotName!==false; }
+function isPlotNameVisible(l){
+  return isPlotNameOn() && isImportVisible(l.impId)
+      && !(store.layers.hiddenPlotNames||[]).includes(l.impId);
+}
+/* 画地（線）を持っている取込ファイルだけが、地番名の切り替えの対象になる */
+function importsWithLines(){ return store.imports.filter(i=>linesOf(i.id).length>0); }
 /* 点がどの画地に属するか（一覧のまとめ方で使う。数が多いので都度作らず控える） */
 let plotOfPt = null;
 function invalidatePlotMap(){ plotOfPt = null; }
@@ -297,6 +306,265 @@ function fmtDist(d){ return (Math.round(d*1000)/1000).toFixed(3); }
 
 /* ================= 永続化 ================= */
 <!--@SRC:1192-1277-->
+/* ================= 重ならないID =================
+   流用元の newId() は「時刻＋乱数5文字」で、数千件を一度に作ると同じミリ秒の中で
+   まれに衝突する（2,400点のSIMAを2回取り込むと数%の確率で1件重なった）。
+   IDが重なると、画地の辺や記録が**別の点に付いてしまう**ので、
+   通し番号を混ぜて必ず重ならないようにする。
+   末尾の4文字は端末・起動ごとに変わるので、他の人の控えと合流しても衝突しない。 */
+let idSeq = 0;
+const ID_TAG = Math.random().toString(36).slice(2,6) + Math.random().toString(36).slice(2,6);
+function newId(){ return Date.now().toString(36) + (idSeq++).toString(36) + ID_TAG; }
+
+/* ================= 現場（プロジェクト）別の保存 =================
+   端末の中に現場を並べて持ち、開けるのは1つだけ。切り替えると中身が丸ごと入れ替わる。
+   IndexedDB(kv)の使い方
+     'sites'      … 現場の目録 {list:[{id,name,created,updated,pts,done,lines}], active}
+     'site:<id>'  … その現場の中身（点・画地・記録・レイヤ・表示設定・系番号…）
+     'device'     … 端末で共通の設定（作業者名・杭種・文字サイズ・間引き・背景地図…）
+     'store'      … v0.6までの1現場ぶん。起動時に「現場１」へ移して以降は読まない
+   snapshots には siteId を付け、世代の整理は現場ごとに行う。 */
+const SITES_KEY='sites', DEVICE_KEY='device', SITE_PREFIX='site:';
+const SITE_MAX_DEFAULT=5, SITE_MAX_MIN=1, SITE_MAX_HI=10;
+/* 端末に1つだけ持つ設定。現場を切り替えても変わらない */
+const DEVICE_SETTING_KEYS=['worker','stakes','stakesVer','stake','fontScale',
+  'thinPt','thinName','thinDist','baseMap','tiffAlpha','colorMode',
+  'mockGps','mockDate','setVer','siteMax'];
+function isDeviceKey(k){ return DEVICE_SETTING_KEYS.includes(k); }
+let sites={ list:[], active:null };
+function siteList(){ return sites.list||(sites.list=[]); }
+function siteById(id){ return siteList().find(x=>x.id===id); }
+function activeSite(){ return siteById(sites.active); }
+function activeSiteName(){ const s=activeSite(); return s?s.name:''; }
+function siteKey(id){ return SITE_PREFIX+id; }
+function siteMax(){
+  const n=parseInt(store.settings.siteMax,10);
+  return (isFinite(n)&&n>=SITE_MAX_MIN&&n<=SITE_MAX_HI)?n:SITE_MAX_DEFAULT;
+}
+function siteFull(){ return siteList().length>=siteMax(); }
+/* いまの現場の中身だけ。端末共通の設定は入れない */
+function siteJson(){
+  const st={};
+  for(const k in store.settings) if(!isDeviceKey(k)) st[k]=store.settings[k];
+  return JSON.stringify({
+    appId:APP_STORAGE_ID, siteId:sites.active, siteName:activeSiteName(),
+    points:store.points, refPoints:store.refPoints, lines:store.lines,
+    routes:store.routes, strokes:store.strokes, imports:store.imports,
+    disp:store.disp, layers:store.layers, settings:st
+  });
+}
+function deviceJson(){
+  const st={};
+  for(const k of DEVICE_SETTING_KEYS) if(store.settings[k]!==undefined) st[k]=store.settings[k];
+  return JSON.stringify({ appId:APP_STORAGE_ID, settings:st });
+}
+/* 控え・自動控え・合流が見るのは「いまの現場の中身」 */
+function snapshotJson(){ return siteJson(); }
+function siteMeta(){
+  const c=progCounts();
+  return { pts:c.all, done:c.done, lines:store.lines.length, updated:new Date().toISOString() };
+}
+function saveSites(){ return idbPut(DB_STORE, JSON.stringify(sites), SITES_KEY); }
+async function flushSave(){
+  if(!savePending) return;
+  savePending=false;
+  if(!sites.active) return;
+  const json=siteJson();
+  try{
+    await idbPut(DB_STORE, json, siteKey(sites.active));
+    await idbPut(DB_STORE, deviceJson(), DEVICE_KEY);
+    const s=activeSite();
+    if(s) Object.assign(s, siteMeta());
+    await saveSites();
+    clearSaveError();
+    if(json!==lastSavedJson){ lastSavedJson=json;
+      if(store.points.length||store.routes.length||store.strokes.length) pushSnapshot(json);
+    }
+  }catch(e){
+    try{ localStorage.setItem(LS_KEY,json); clearSaveError(); }
+    catch(e2){ markSaveError(e.message||e); }
+  }
+}
+/* 待たずに今すぐ書く（現場を切り替える前に必ず通す） */
+async function flushNow(){
+  clearTimeout(saveTimer);
+  savePending=true;
+  await flushSave();
+}
+/* 自動控えは現場ごとに10世代（＋日付ごとの初回） */
+async function pushSnapshot(json){
+  if(snapBusy) return;
+  snapBusy=true;
+  try{
+    const sid=sites.active||'';
+    const now=new Date();
+    const rec={ id:now.toISOString(), siteId:sid, date:realTodayStr(), json,
+                pt:store.points.length, rt:store.routes.length, st:store.strokes.length };
+    await idbPut('snapshots',rec);
+    const all=(await idbReq('snapshots','readonly',s=>s.getAll()))
+                .filter(r=>(r.siteId||'')===sid);
+    all.sort((a,b)=>a.id<b.id?1:-1);
+    const keepDates=new Set(), del=[];
+    all.forEach((r,i)=>{
+      const firstOfDay=!keepDates.has(r.date);
+      keepDates.add(r.date);
+      if(i>=SNAP_KEEP && !firstOfDay) del.push(r.id);
+    });
+    if(del.length) await idbReq('snapshots','readwrite',s=>{ del.forEach(id=>s.delete(id)); });
+  }catch(e){}
+  finally{ snapBusy=false; }
+}
+async function deleteSnapshotsOf(sid){
+  try{
+    const all=await idbReq('snapshots','readonly',s=>s.getAll());
+    const del=all.filter(r=>(r.siteId||'')===sid).map(r=>r.id);
+    if(del.length) await idbReq('snapshots','readwrite',s=>{ del.forEach(id=>s.delete(id)); });
+  }catch(e){}
+}
+/* v0.6までの控えには現場が付いていないので、移行した現場のものとして扱う */
+async function adoptOldSnapshots(sid){
+  try{
+    const all=await idbReq('snapshots','readonly',s=>s.getAll());
+    const orphan=all.filter(r=>!r.siteId);
+    if(!orphan.length) return;
+    await idbReq('snapshots','readwrite',s=>{ orphan.forEach(r=>{ r.siteId=sid; s.put(r); }); });
+  }catch(e){}
+}
+/* いまの現場の中身だけを空にする（端末共通の設定と他の現場は残す） */
+function resetStoreData(){
+  store.points=[]; store.refPoints=[]; store.lines=[];
+  store.routes=[]; store.strokes=[]; store.imports=[];
+  store.disp=Object.assign({}, DEFAULT_DISP);
+  store.layers={ pt:true, ref:true, line:true, plotName:true, route:true, dist:true, memo:true,
+                 base:true, map:true, hiddenImports:[], hiddenPlotNames:[],
+                 stNone:true, stDa:true, stKi:true };
+  store.settings.lastView=null;
+  store.settings.lastExport=null;
+  state.currentRoute=[];
+  invalidatePtMap(); invalidatePlotMap();
+}
+/* 既定値の補完。読み込み・切替・新規のいずれからも通す */
+function fillDefaults(){
+  ['pt','ref','line','plotName','route','dist','memo','base','map','stNone','stDa','stKi'].forEach(k=>{
+    if(store.layers[k]===undefined) store.layers[k]=true;
+  });
+  if(!Array.isArray(store.layers.hiddenImports)) store.layers.hiddenImports=[];
+  if(!Array.isArray(store.layers.hiddenPlotNames)) store.layers.hiddenPlotNames=[];
+  if(!store.disp) store.disp={};
+  for(const k in DEFAULT_DISP) if(store.disp[k]===undefined) store.disp[k]=DEFAULT_DISP[k];
+  for(const k in DEFAULT_SETTINGS)
+    if(store.settings[k]===undefined) store.settings[k]=DEFAULT_SETTINGS[k];
+  if(store.settings.siteMax===undefined) store.settings.siteMax=SITE_MAX_DEFAULT;
+  stakeList();
+  if(!stakeList().includes(store.settings.stake)) store.settings.stake=stakeList()[0];
+}
+async function readSite(id){
+  try{
+    const j=await idbGet(DB_STORE, siteKey(id));
+    if(j){ const d=JSON.parse(j); if(isFukugenData(d)) return d; }
+  }catch(e){}
+  return null;
+}
+/* 現場を切り替えたあとの画面の作り直し */
+function afterSiteChange(){
+  applyFontScale();
+  updateSiteChip(); updateProg(); updateListCount(); updateActionbar(); renderRibbon();
+  state.viewRestored = restoreView();
+  if(!state.viewRestored && store.points.length)
+    fitToBox(store.points.map(p=>p.x), store.points.map(p=>p.y));
+  draw();
+  if(panelOpen('sitePanel')) renderSites();
+  if(panelOpen('layerPanel')) openLayers();
+  if(panelOpen('listPanel')) openList();
+}
+async function switchSite(id){
+  const s=siteById(id);
+  if(!s || id===sites.active) return false;
+  await flushNow();
+  sites.active=id;
+  const d=await readSite(id);
+  resetStoreData();
+  applyLoaded(d);
+  fillDefaults();
+  clearUndoStacks();
+  lastSavedJson=siteJson();
+  await saveSites();
+  afterSiteChange();
+  toast(`現場「${s.name}」を開きました`);
+  return true;
+}
+/* payload を渡すと、その中身で現場を作る（控えから新しい現場として読む） */
+async function createSite(name, payload){
+  if(siteFull()){
+    alert(`現場は${siteMax()}件までです。\n\nどれかを削除するか、「準備」タブの［各種設定］で上限を増やしてください。`);
+    return null;
+  }
+  await flushNow();
+  const zone=store.settings.zone;          // ふつう次の現場も同じ系なので引き継ぐ
+  const id=newId();
+  const now=new Date().toISOString();
+  const rec={ id, name:(name||'').trim()||`現場${siteList().length+1}`,
+              created:now, updated:now, pts:0, done:0, lines:0 };
+  siteList().push(rec);
+  sites.active=id;
+  resetStoreData();
+  store.settings.zone=zone;
+  if(payload) applyLoaded(payload);
+  fillDefaults();
+  clearUndoStacks();
+  lastSavedJson='';
+  savePending=true; await flushSave();
+  afterSiteChange();
+  return rec;
+}
+async function renameSite(id, name){
+  const s=siteById(id);
+  const v=String(name||'').trim();
+  if(!s || !v) return false;
+  s.name=v;
+  await saveSites();
+  updateSiteChip(); renderRibbon();
+  if(panelOpen('sitePanel')) renderSites();
+  return true;
+}
+async function removeSite(id){
+  const s=siteById(id);
+  if(!s) return false;
+  if(siteList().length<=1){
+    alert('最後の1件は削除できません。\n\n中身だけ消したいときは「データ」タブの［この現場を空にする］をお使いください。');
+    return false;
+  }
+  if(!confirm(`【削除するもの】現場「${s.name}」の中身すべて\n`
+    + `　境界点${s.pts||0}（記録済み${s.done||0}）／画地${s.lines||0}／その現場の自動控え\n`
+    + `【残るもの】ほかの現場、杭種・作業者名などの端末の設定、地図の控え\n`
+    + `【元に戻せるか】戻せません\n\n削除しますか?`)) return false;
+  try{ await idbReq(DB_STORE,'readwrite',st=>st.delete(siteKey(id))); }catch(e){}
+  await deleteSnapshotsOf(id);
+  sites.list=siteList().filter(x=>x.id!==id);
+  if(sites.active===id){
+    const next=siteList()[0];
+    sites.active=next.id;
+    const d=await readSite(next.id);
+    resetStoreData(); applyLoaded(d); fillDefaults(); clearUndoStacks();
+    lastSavedJson=siteJson();
+    await saveSites();
+    afterSiteChange();
+  } else {
+    await saveSites();
+    if(panelOpen('sitePanel')) renderSites();
+    renderRibbon();
+  }
+  toast(`現場「${s.name}」を削除しました`);
+  return true;
+}
+function updateSiteChip(){
+  const el=document.getElementById('siteChip');
+  if(!el) return;
+  const n=activeSiteName();
+  el.textContent = n || '—';
+  el.title = `いま開いている現場（${siteList().length}/${siteMax()}件）`;
+}
+
 function isFukugenData(d){
   if(!d || !d.settings || !Array.isArray(d.points) || !Array.isArray(d.routes)
      || !Array.isArray(d.imports) || !Array.isArray(d.lines)) return false;
@@ -322,39 +590,49 @@ function applyLoaded(d){
   return true;
 }
 async function load(){
-  let loaded=null;
+  /* 1) 端末で共通の設定 → 2) 現場の目録 → 3) いまの現場の中身 の順に読む */
   try{
-    const json=await idbGet(DB_STORE,DB_KEY);
-    if(json){ const d=JSON.parse(json); if(isFukugenData(d)) loaded=d; }
+    const j=await idbGet(DB_STORE, DEVICE_KEY);
+    if(j){ const d=JSON.parse(j); if(d && d.settings) Object.assign(store.settings, d.settings); }
   }catch(e){}
-  if(!loaded){
+  try{
+    const j=await idbGet(DB_STORE, SITES_KEY);
+    if(j){ const d=JSON.parse(j); if(d && Array.isArray(d.list) && d.list.length) sites=d; }
+  }catch(e){}
+
+  let migrated=false;
+  if(!siteList().length){
+    /* v0.6までの1現場ぶんを「現場１」へ移す。無ければ空の「現場１」を作る */
+    let legacy=null;
     try{
-      const raw=localStorage.getItem(LS_KEY) || localStorage.getItem(LEGACY_LS_KEY);
-      if(raw){
-        const d=JSON.parse(raw);
-        if(isFukugenData(d)){
-          loaded=d;
-          applyLoaded(loaded);
-          localStorage.setItem(LS_KEY,JSON.stringify(store));
-          await idbPut(DB_STORE,JSON.stringify(store),DB_KEY).catch(()=>{});
-          loaded=null;
-        }
-      }
+      const j=await idbGet(DB_STORE, DB_KEY);
+      if(j){ const d=JSON.parse(j); if(isFukugenData(d)) legacy=d; }
     }catch(e){}
+    if(!legacy){
+      try{
+        const raw=localStorage.getItem(LS_KEY) || localStorage.getItem(LEGACY_LS_KEY);
+        if(raw){ const d=JSON.parse(raw); if(isFukugenData(d)) legacy=d; }
+      }catch(e){}
+    }
+    const id=newId(), now=new Date().toISOString();
+    sites={ list:[{ id, name:'現場１', created:now, updated:now, pts:0, done:0, lines:0 }], active:id };
+    if(legacy) applyLoaded(legacy);      // 端末共通の設定も旧データから引き継ぐ
+    migrated=true;
+  } else {
+    if(!siteById(sites.active)) sites.active=siteList()[0].id;
+    applyLoaded(await readSite(sites.active));
   }
-  applyLoaded(loaded);
-  ['pt','ref','line','route','dist','memo','base','map','stNone','stDa','stKi'].forEach(k=>{
-    if(store.layers[k]===undefined) store.layers[k]=true;
-  });
-  if(!Array.isArray(store.layers.hiddenImports)) store.layers.hiddenImports=[];
-  if(!store.disp) store.disp={};
-  for(const k in DEFAULT_DISP) if(store.disp[k]===undefined) store.disp[k]=DEFAULT_DISP[k];
-  for(const k in DEFAULT_SETTINGS)
-    if(store.settings[k]===undefined) store.settings[k]=DEFAULT_SETTINGS[k];
-  stakeList();
-  if(!stakeList().includes(store.settings.stake)) store.settings.stake=stakeList()[0];
+
+  fillDefaults();
   applyFontScale();
-  lastSavedJson=snapshotJson();
+  if(migrated){
+    await adoptOldSnapshots(sites.active);
+    lastSavedJson='';
+    savePending=true;
+    await flushSave();
+  } else {
+    lastSavedJson=siteJson();
+  }
   requestPersist();
 }
 <!--@SRC:1349-1356-->
@@ -389,6 +667,8 @@ async function showStorageInfo(){
     }
   }catch(e){}
   const c=progCounts(), le=store.settings.lastExport;
+  const siteLine = siteList().map(x=>
+    `　${x.id===sites.active?'▶':'　'} ${x.name}（${x.pts||0}点／記録${x.done||0}）`).join('\n');
   alert('保存状態\n\n'
     +`アプリ: ${appFull()}\n`
     +`ビルド: ${APP_BUILD}\n\n`
@@ -400,6 +680,8 @@ async function showStorageInfo(){
     +`地図の控え: ${tileLine}\n`
     +`自動バックアップ: ${snaps}世代\n`
     +`最後のJSONバックアップ: ${le?le:'まだ保存していません'}\n\n`
+    +`現場: ${siteList().length}/${siteMax()}件\n${siteLine}\n\n`
+    +`いま開いている現場「${activeSiteName()}」\n`
     +`境界点 ${c.all}点（打設${c.da} / 既設${c.ki} / 未${c.no}）\n`
     +`画地の線 ${store.lines.length}／計測線 ${store.routes.length}／基準点 ${store.refPoints.length}／メモ ${store.strokes.length}\n\n`
     +'※端末内の保存は端末の故障・初期化で失われます。作業終了時にJSONバックアップを端末外へ保存してください。');
@@ -465,19 +747,38 @@ function draw(){
   ctx.lineCap='round'; ctx.lineJoin='round';
   ctx.strokeStyle=disp('lineColor'); ctx.lineWidth=+disp('lineWidth')||2;
   ctx.setLineDash([]);
-  const distJobs=[];
+  const distJobs=[], plotJobs=[];
+  const namesOn = isPlotNameOn();
   for(const l of store.lines){
     if(!isLineVisible(l)) continue;
     const ids=l.ptIds, n=ids.length;
     if(n<2) continue;
     const segs = l.closed ? n : n-1;
+    /* 画地名（地番）を置く場所を決めるための材料。
+       全部が画面に入っていれば頂点の平均＝画地の真ん中に置き、
+       はみ出していれば「画面に見えている線」の長さの真ん中に置く。 */
+    let allIn=true, sumX=0, sumY=0, nV=0;
+    const vis=[];
+    const showPlotName = namesOn && isPlotNameVisible(l);
     ctx.beginPath();
     for(let i=0;i<segs;i++){
       const a=idx.get(ids[i]), b=idx.get(ids[(i+1)%n]);
       if(!a||!b) continue;
       const A=toScr(a.x,a.y), B=toScr(b.x,b.y);
+      if(showPlotName){
+        sumX+=A[0]; sumY+=A[1]; nV++;
+        if(!onScreen(A)) allIn=false;
+        if(i===segs-1 && !onScreen(B)) allIn=false;
+      }
       if(!segOnScreen(A,B)) continue;
       ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]);
+      if(showPlotName){
+        const c=clipSeg(A,B);
+        if(c){
+          const len=Math.hypot(c[1][0]-c[0][0], c[1][1]-c[0][1]);
+          if(len>0) vis.push({ a:c[0], b:c[1], len });
+        }
+      }
       if(showDist){
         const px=Math.hypot(B[0]-A[0],B[1]-A[1]);
         if(px>=distMin){
@@ -487,6 +788,26 @@ function draw(){
       }
     }
     ctx.stroke();
+    if(showPlotName){
+      const cands = plotLabelAnchors(vis, allIn, sumX, sumY, nV);
+      if(cands.length) plotJobs.push([cands, plotLabelText(l)]);
+    }
+  }
+  /* 画地名は数が少なく、いまどの画地を見ているかの手がかりになるので、
+     場所の取り合いでは点名や距離より先に確保する（描くのは最後＝いちばん手前）。 */
+  const plotDraw=[];
+  if(namesOn && plotJobs.length){
+    const px=labelFont('plotNameSize');
+    ctx.font='bold '+px+'px sans-serif';
+    for(const [cands, text] of plotJobs){
+      const w=ctx.measureText(text).width, h=px+4;
+      /* 真ん中が他のラベルで埋まっていたら、その画地自身の線の上へ逃がす */
+      for(const at of cands){
+        const cx=Math.min(W-w/2-4, Math.max(w/2+4, at[0]));
+        const cy=Math.min(H-h/2-4, Math.max(h/2+4, at[1]));
+        if(placeLabel(cx, cy, w+10, h+6)){ plotDraw.push([cx, cy, text, px]); break; }
+      }
+    }
   }
   /* --- 計測線 --- */
   ctx.strokeStyle=disp('routeColor'); ctx.lineWidth=+disp('routeWidth')||3;
@@ -567,6 +888,8 @@ function draw(){
      点名のほうが「いまどの点を記録するか」に直結するので、
      場所の取り合いになったときは点名を優先して距離を落とす。 */
   for(const [A,B,t] of distJobs) drawDistLabel(A,B,t,distPx);
+  /* --- 画地名（地番）--- */
+  for(const [cx,cy,text,px] of plotDraw) drawPlotName(cx,cy,text,px);
   if(state.gps.ok){
     const [x,y]=toScr(state.gps.x,state.gps.y);
     const [ax,ay]=accToMapUnitsXY(state.gps.acc);
@@ -581,6 +904,81 @@ function draw(){
   updateZoomLabel();
   updateHint();
 }
+/* ================= 画地名（地番）の置き場所 =================
+   D00の区画名（地番が入っていればそれ）を、画地ごとに1つだけ出す。
+   ・画地が丸ごと画面に入っているとき … 頂点の平均＝画地の真ん中
+   ・はみ出しているとき（拡大時）     … 画面に見えている画地線の、長さの真ん中
+   真ん中のままだと拡大したときに画面の外へ出てしまい、
+   「いまどの画地を見ているのか」が分からなくなるため。 */
+const PLOT_LABEL_MIN_PX = 60;      // 見えている線がこれより短ければ出さない
+function plotLabelText(l){
+  const s=String(l.name==null?'':l.name).trim();
+  return s || `画地${l.no}`;
+}
+function onScreen(P){ return P[0]>=0 && P[0]<=W && P[1]>=0 && P[1]<=H; }
+/* 線分を画面の矩形で切り取る（Liang-Barsky）。見えている部分だけを返す */
+function clipSeg(A,B){
+  let t0=0, t1=1;
+  const dx=B[0]-A[0], dy=B[1]-A[1];
+  const p=[-dx, dx, -dy, dy];
+  const q=[A[0]-0, W-A[0], A[1]-0, H-A[1]];
+  for(let i=0;i<4;i++){
+    if(p[i]===0){ if(q[i]<0) return null; continue; }
+    const r=q[i]/p[i];
+    if(p[i]<0){ if(r>t1) return null; if(r>t0) t0=r; }
+    else       { if(r<t0) return null; if(r<t1) t1=r; }
+  }
+  return [[A[0]+t0*dx, A[1]+t0*dy], [A[0]+t1*dx, A[1]+t1*dy]];
+}
+/* 置きたい順に候補を返す。前のものが他のラベルとぶつかったら次を使う。
+   1つ目 … 画地の真ん中（丸ごと画面に入っているときだけ）
+   2つ目 … 画面に見えている画地線の、長さの真ん中 */
+/* 線の上をずらす順番。真ん中から始めて、ふさがっていたら前後へ逃げる */
+const PLOT_LABEL_SLIDE = [0.5, 0.25, 0.75, 0.375, 0.625, 0.125, 0.875];
+function plotLabelAnchors(vis, allIn, sumX, sumY, nV){
+  const out=[];
+  if(allIn && nV) out.push([sumX/nV, sumY/nV]);
+  let total=0;
+  for(const s of vis) total+=s.len;
+  if(total >= PLOT_LABEL_MIN_PX){
+    for(const f of PLOT_LABEL_SLIDE){
+      const at = lineFractionPoint(vis, total, f);
+      if(at) out.push(at);
+    }
+  }
+  return out;
+}
+function visibleLineMidpoint(vis){
+  let total=0;
+  for(const s of vis) total+=s.len;
+  if(total < PLOT_LABEL_MIN_PX) return null;
+  return lineFractionPoint(vis, total, 0.5);
+}
+/* 見えている線を端からたどって、全長の f 倍のところの座標を返す */
+function lineFractionPoint(vis, total, f){
+  let rest = total * f;
+  for(const s of vis){
+    if(rest<=s.len){
+      const t = s.len ? rest/s.len : 0;
+      return [s.a[0]+(s.b[0]-s.a[0])*t, s.a[1]+(s.b[1]-s.a[1])*t];
+    }
+    rest-=s.len;
+  }
+  const last=vis[vis.length-1];
+  return last ? [last.b[0], last.b[1]] : null;
+}
+/* 線の上に重なっても読めるよう、白い縁取りの上に書く */
+function drawPlotName(cx, cy, text, px){
+  ctx.font='bold '+px+'px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  const w=ctx.measureText(text).width, h=px+4;
+  ctx.fillStyle='rgba(255,255,255,.78)';
+  ctx.fillRect(cx-w/2-5, cy-h/2-3, w+10, h+6);
+  ctx.lineWidth=3; ctx.strokeStyle='#fff'; ctx.strokeText(text, cx, cy);
+  ctx.fillStyle=disp('plotNameColor'); ctx.fillText(text, cx, cy);
+  ctx.textBaseline='alphabetic';
+}
+
 /* --- 文字の重なりよけ ---
    点名や距離をそのまま全部書くと、密なところで文字が重なって読めなくなる。
    すでに書いた場所を覚えておき、ぶつかるものは書かない（拡大すれば出てくる）。 */
@@ -874,7 +1272,7 @@ function cancelRoute(){ state.currentRoute=[]; updateActionbar(); draw(); }
 function commitRoute(){
   if(state.currentRoute.length<2){ toast('2点以上タップしてください'); return; }
   pushRtUndo();
-  const rt={ id:uid(), ptIds:[...state.currentRoute], date:todayStr(), ts:Date.now() };
+  const rt={ id:newId(), ptIds:[...state.currentRoute], date:todayStr(), ts:Date.now() };
   store.routes.push(rt);
   state.currentRoute=[];
   store.layers.route=true; store.layers.dist=true;
@@ -912,6 +1310,8 @@ function clearStrokes(){
 /* ================= リボン ================= */
 const RIBBON = [
   { id:'prep',  label:'準備', icon:'🗺', mode:'view', groups:[
+      { label:'現場', items:[
+          {ic:'📁', t:'現場', fn:"openSites()", sub:'siteCount'} ]},
       { label:'背景地図', sel:'basemap' },
       { label:'取込', items:[
           {ic:'📥', t:'境界点取込', fn:"pickImport('bp')",  sub:'bpCount'},
@@ -971,7 +1371,8 @@ const RIBBON = [
       { label:'控え', items:[
           {ic:'📤', t:'保存', fn:"exportJson()", sub:'backup'},
           {ic:'📥', t:'控えを読む', fn:"pickMerge()"},
-          {ic:'🗑', t:'全データ削除', fn:"clearAll()", danger:true} ]},
+          {ic:'🧹', t:'この現場を空に', fn:"clearSite()", danger:true},
+          {ic:'🗑', t:'全現場を消す', fn:"clearAllSites()", danger:true} ]},
     ]},
 ];
 const MODE_LABEL={view:'閲覧',rec:'復元',line:'計測',memo:'メモ'};
@@ -1030,6 +1431,7 @@ function ribbonState(){
       layer: `${store.lines.length}画地/${store.imports.length}件`,
       listCount: `${c.all}点/${store.lines.length}画地`,
       backup: !c.all ? '' : (!le ? '未保存' : (dz<=0 ? '本日' : dz + '日前')),
+      siteCount: `${activeSiteName()||'—'}\u3000${siteList().length}/${siteMax()}件`,
     },
     warn: { worker: !store.settings.worker,
             backup: c.done>0 && daysSince(le)>=7 },
@@ -1126,6 +1528,57 @@ function updateActionbar(){
 }
 <!--@SRC:2516-2540-->
 
+/* ================= 現場の画面 ================= */
+function openSites(){ renderSites(); openPanel('sitePanel'); }
+function renderSites(){
+  const max=siteMax(), n=siteList().length;
+  document.getElementById('siteInfo').innerHTML =
+    `<b>${n} / ${max}件</b>　開けるのは1つだけです。`
+    + (n>=max?`<br><span style="color:#8c1d18;">上限です。新しく作るには、どれかを削除するか［各種設定］で上限を増やしてください。</span>`:'');
+  const cur=sites.active;
+  document.getElementById('siteRows').innerHTML = siteList().map(x=>{
+    const on=x.id===cur;
+    const up=x.updated?String(x.updated).slice(0,10):'';
+    return `<div class="siteRow${on?' on':''}">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="flex:1;min-width:0;">
+          <span class="nm">${esc(x.name)}</span>${on?'<span class="badge">開いています</span>':''}
+          <span class="sub">境界点 ${x.pts||0}（記録済み ${x.done||0}）／画地 ${x.lines||0}${up?`　最終 ${up}`:''}</span>
+        </span>
+        ${on?'':`<button type="button" class="del" style="background:#e7f0fb;color:#1e73d2;min-width:56px;"
+          onclick="openSite('${x.id}')">開く</button>`}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button type="button" class="del" style="flex:1;" onclick="askRenameSite('${x.id}')">名前を変える</button>
+        <button type="button" class="del" style="flex:1;${n<=1?'opacity:.45;':''}" onclick="askRemoveSite('${x.id}')">削除</button>
+      </div></div>`;
+  }).join('');
+  const btn=document.getElementById('newSiteBtn');
+  if(btn){ btn.disabled=n>=max; btn.style.opacity=n>=max?'.45':''; }
+  applyA11y(document.getElementById('sitePanel'));
+}
+async function openSite(id){
+  await switchSite(id);
+  closePanel('sitePanel');
+}
+async function addSite(){
+  const el=document.getElementById('newSiteName');
+  const rec=await createSite(el?el.value:'');
+  if(!rec) return;
+  if(el) el.value='';
+  closePanel('sitePanel');
+  toast(`現場「${rec.name}」を作りました`);
+}
+async function askRenameSite(id){
+  const s=siteById(id); if(!s) return;
+  const v=prompt('現場の名前を入れてください。', s.name);
+  if(v===null) return;
+  if(!String(v).trim()){ toast('名前は空にできません'); return; }
+  await renameSite(id, v);
+  toast('名前を変えました');
+}
+async function askRemoveSite(id){ await removeSite(id); }
+
 /* ================= 杭種の設定 ================= */
 function openStakes(){
   document.getElementById('stakeEdit').innerHTML = stakeList().map((s,i)=>
@@ -1167,6 +1620,7 @@ function openLayers(){
   const rows=[
     ['pt',   '境界点', progCounts().all+'点'],
     ['line', '画地の線', store.lines.length+'画地'],
+    ['plotName', '画地名（地番）', store.lines.length?'画地ごとに1つ':'—'],
     ['route','計測線', store.routes.length+'本'],
     ['dist', '距離', store.layers.dist!==false?`辺が${Math.max(10,+store.settings.thinDist||40)}px以上のとき`:'—'],
     ['ref',  '基準点', store.refPoints.length+'点'],
@@ -1211,6 +1665,16 @@ function openLayers(){
       <span class="swatch" style="background:${col}"></span>
       <span style="flex:1">${lb}</span><span class="coords">${n}点</span></div>`;
   }).join('');
+  const withLines = importsWithLines();
+  document.getElementById('plotNameLayers').innerHTML = withLines.length ? withLines.map(imp=>{
+    const on = !(store.layers.hiddenPlotNames||[]).includes(imp.id);
+    const hid = !isImportVisible(imp.id);
+    return `<div class="listRow">
+      <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
+        onclick="togglePlotNameLayer('${imp.id}')">${on?'表示':'非表示'}</button>
+      <span style="flex:1">${esc(imp.name)}</span>
+      <span class="coords">${linesOf(imp.id).length}画地${hid?'<br>ファイルが非表示':''}</span></div>`;
+  }).join('') : '<p style="color:#888;font-size:14px;">画地データ入りのSIMAを取り込むと、ここに出ます</p>';
   document.getElementById('importLayers').innerHTML = store.imports.length ? store.imports.map(imp=>{
     const on=isImportVisible(imp.id);
     const n = imp.kind==='ref' ? refPointsOf(imp.id).length : pointsOf(imp.id).length;
@@ -1233,9 +1697,15 @@ function toggleLayer(k){
   else toast(`${layerName(k)}を${store.layers[k]?'表示':'非表示'}にしました`);
 }
 function layerName(k){
-  return {pt:'境界点',line:'画地の線',route:'計測線',dist:'距離',ref:'基準点',
+  return {pt:'境界点',line:'画地の線',plotName:'画地名（地番）',route:'計測線',dist:'距離',ref:'基準点',
           memo:'手書きメモ',base:'図面',map:'背景地図',
           stDa:'打設',stKi:'既設',stNone:'未'}[k]||k;
+}
+function togglePlotNameLayer(id){
+  const h=store.layers.hiddenPlotNames||(store.layers.hiddenPlotNames=[]);
+  const i=h.indexOf(id);
+  if(i>=0) h.splice(i,1); else h.push(id);
+  save(); openLayers(); draw();
 }
 function toggleImportLayer(id){
   const h=store.layers.hiddenImports||(store.layers.hiddenImports=[]);
@@ -1245,16 +1715,19 @@ function toggleImportLayer(id){
 }
 function showAllLayers(){
   store.layers.hiddenImports=[];
-  ['pt','ref','line','route','dist','memo','base','map','stNone','stDa','stKi']
+  store.layers.hiddenPlotNames=[];
+  ['pt','ref','line','plotName','route','dist','memo','base','map','stNone','stDa','stKi']
     .forEach(k=>store.layers[k]=true);
   save(); openLayers(); draw(); renderRibbon();
   toast('すべて表示にしました');
 }
 function layerNowText(){
-  const kinds=['pt','ref','line','route','dist','memo','base','map'];
+  const kinds=['pt','ref','line','plotName','route','dist','memo','base','map'];
   const off=kinds.filter(k=>store.layers[k]===false).length + (store.layers.hiddenImports||[]).length;
   const stOff=['stDa','stKi','stNone'].filter(k=>store.layers[k]===false).map(layerName);
-  return `種類: <b>${off?`${off}種類が非表示`:'すべて'}</b>　／　状態: <b>${stOff.length?`${stOff.join('・')}を非表示`:'すべて'}</b>`;
+  const pn=(store.layers.hiddenPlotNames||[]).filter(i=>importById(i)).length;
+  return `種類: <b>${off?`${off}種類が非表示`:'すべて'}</b>　／　状態: <b>${stOff.length?`${stOff.join('・')}を非表示`:'すべて'}</b>`
+       + (pn?`　／　地番名: <b>${pn}件を非表示</b>`:'');
 }
 
 /* ================= 記録画面（点をタップしたとき） ================= */
@@ -1556,6 +2029,8 @@ const DISP_SET = {
   line: { title:'表示設定（線・距離）', keys:[
     ['col',  'lineColor',   '画地の線の色'],
     ['num',  'lineWidth',   '画地の線の太さ', 1, 8],
+    ['col',  'plotNameColor','画地名（地番）の色'],
+    ['size', 'plotNameSize', '画地名（地番）の大きさ'],
     ['col',  'routeColor',  '計測線の色'],
     ['num',  'routeWidth',  '計測線の太さ', 1, 8],
     ['col',  'distColor',   '距離の文字の色'],
@@ -1610,6 +2085,8 @@ function applyFontScale(){
 function openSettings(){
   document.getElementById('setFontScale').value=fontScale();
   document.getElementById('setWorker').value=store.settings.worker||'';
+  document.getElementById('setSiteMax').value=siteMax();
+  document.getElementById('setSiteMax').min=Math.max(SITE_MAX_MIN, siteList().length);
   document.getElementById('setThinPt').value=+store.settings.thinPt||300;
   document.getElementById('setThinName').value=+store.settings.thinName||150;
   document.getElementById('setThinDist').value=+store.settings.thinDist||40;
@@ -1625,6 +2102,12 @@ function saveSettings(){
     const n=parseInt(document.getElementById(id).value,10);
     return isFinite(n) ? Math.min(hi,Math.max(lo,n)) : dv;
   };
+  const wantMax = num('setSiteMax', SITE_MAX_DEFAULT, SITE_MAX_MIN, SITE_MAX_HI);
+  const lowest  = Math.max(SITE_MAX_MIN, siteList().length);
+  if(wantMax < lowest){
+    toast(`現場の上限は${lowest}件より小さくできません（いま${siteList().length}件あります）`);
+    store.settings.siteMax = lowest;
+  } else store.settings.siteMax = wantMax;
   store.settings.thinPt   = num('setThinPt',300,20,5000);
   store.settings.thinName = num('setThinName',150,10,5000);
   store.settings.thinDist = num('setThinDist',40,10,400);
@@ -1777,13 +2260,13 @@ function commitImport(){
   const {parsed, src}=pendingImport;
   const kind=importKind;
   const name=(document.getElementById('impName').value||'').trim()||(kind==='ref'?'基準点':'境界点');
-  const imp={ id:uid(), name, src, kind, ts:new Date().toISOString() };
+  const imp={ id:newId(), name, src, kind, ts:new Date().toISOString() };
   store.imports.push(imp);
   const byNo=new Map(), byName=new Map();
   const target = kind==='ref' ? store.refPoints : store.points;
   parsed.pts.forEach((r,i)=>{
     const m=xyToMapPoint(r.X, r.Y);
-    const p={ id:uid(), impId:imp.id, no:r.no, name:r.name, x:m.x, y:m.y, z:r.z||0, idx:i };
+    const p={ id:newId(), impId:imp.id, no:r.no, name:r.name, x:m.x, y:m.y, z:r.z||0, idx:i };
     if(r.stake) p.stake=normalizeStakeName(r.stake);
     if(kind==='ref') p.ref=true;
     target.push(p);
@@ -1809,7 +2292,7 @@ function commitImport(){
     const a=idx.get(ptIds[ptIds.length-1]), b=idx.get(ptIds[0]);
     const last=dists[dists.length-1];
     const closed = !!(a && b && isFinite(last) && Math.abs(distBetween(a,b)-last) < 0.05);
-    store.lines.push({ id:uid(), impId:imp.id, no:pl.no, name:pl.name, ptIds, dists, closed, lost });
+    store.lines.push({ id:newId(), impId:imp.id, no:pl.no, name:pl.name, ptIds, dists, closed, lost });
     nLine++; nSeg += lineSegments(store.lines[store.lines.length-1], idx).n;
   }
   store.layers.hiddenImports=(store.layers.hiddenImports||[]).filter(i=>i!==imp.id);
@@ -1897,8 +2380,11 @@ function exportRestorationCsv(){
 }
 
 /* ================= 控え（JSON） ================= */
+function safeFileName(s){ return String(s||'').replace(/[\\/:*?"<>|]/g,'_').trim(); }
 function exportJson(){
-  download(new Blob([JSON.stringify(store,null,1)],{type:'application/json'}), `境界復元_控え_${todayStr()}.json`);
+  const nm=safeFileName(activeSiteName());
+  download(new Blob([JSON.stringify(JSON.parse(siteJson()),null,1)],{type:'application/json'}),
+           `境界復元_${nm?nm+'_':''}控え_${todayStr()}.json`);
   store.settings.lastExport=realTodayStr();
   save(); renderRibbon();
   toast('控えを保存しました');
@@ -1912,6 +2398,7 @@ async function openSnapshots(){
   let all=[];
   try{ all=await idbReq('snapshots','readonly',s=>s.getAll()); }
   catch(e){ box.innerHTML='<p style="color:#888;font-size:14px;">自動バックアップを読み込めません。</p>'; return; }
+  all=all.filter(r=>(r.siteId||'')===(sites.active||''));   // いまの現場のぶんだけ
   all.sort((a,b)=>a.id<b.id?1:-1);
   if(!all.length){ box.innerHTML='<p style="color:#888;font-size:14px;">まだ自動バックアップがありません。</p>'; return; }
   box.innerHTML=all.map(r=>{
@@ -1956,29 +2443,68 @@ document.getElementById('fileJson').addEventListener('change', async e=>{
   }catch(err){ alert('読込に失敗しました: '+err.message); }
 });
 /* 他の人の控えを合流（置き換えではなく追加。同じidのものは飛ばす） */
+let pendingMerge=null;
 document.getElementById('fileMerge').addEventListener('change', async e=>{
   const file=e.target.files[0]; if(!file) return;
   e.target.value='';
   try{
     const d=JSON.parse(await file.text());
     if(!isFukugenData(d)) throw new Error('境界復元アプリの控えではないようです');
-    const workers=[...new Set((d.points||[]).map(p=>p.rec&&p.rec.w).filter(Boolean))];
-    const done=(d.points||[]).filter(p=>p.rec&&(p.rec.k==='da'||p.rec.k==='ki')).length;
-    if(!confirm(`控え（JSON）の中身を、今のデータに<追加>します。\n今あるものは消えません。同じ点・同じ線は自動で飛ばします。\n\n`
-      +`境界点 ${(d.points||[]).length}（記録済み ${done}）/ 画地 ${(d.lines||[]).length} / 計測線 ${(d.routes||[]).length}\n`
-      +`記録者: ${workers.join('、')||'（未設定）'}\n\nよろしいですか?`)) return;
-    await pushSnapshot(snapshotJson());
-    const r=mergeStore(d);
-    clearUndoStacks();
-    invalidatePtMap(); invalidatePlotMap();
-    save(); updateActionbar(); updateListCount(); draw();
-    alert(`読み込みました。\n\n`
-      +`境界点: ${r.addP}件を追加（重複 ${r.skipP}件は飛ばしました）\n`
-      +`そのうち記録の入った点: ${r.recP}件\n`
-      +`同じ点に既に記録があってそのままにした: ${r.keepP}件\n`
-      +`基準点 ${r.addRef} / 画地 ${r.addL} / 計測線 ${r.addR} / メモ ${r.addS} / ファイル ${r.addI}`);
+    pendingMerge={ file, data:d };
+    showMergeChoice();
   }catch(err){ alert('読み込みに失敗しました: '+(err&&err.message||err)); }
 });
+function showMergeChoice(){
+  const {file, data:d}=pendingMerge;
+  const workers=[...new Set((d.points||[]).map(p=>p.rec&&p.rec.w).filter(Boolean))];
+  const done=(d.points||[]).filter(p=>p.rec&&(p.rec.k==='da'||p.rec.k==='ki')).length;
+  const other = d.siteId && sites.active && d.siteId!==sites.active;
+  document.getElementById('mergeInfo').innerHTML =
+    `<div class="noteBox">ファイル: <b>${esc(file.name)}</b><br>`
+    + (d.siteName?`控えの現場: <b>${esc(d.siteName)}</b><br>`:'')
+    + `境界点 <b>${(d.points||[]).length}</b>（記録済み ${done}）／画地 ${(d.lines||[]).length}／計測線 ${(d.routes||[]).length}<br>`
+    + `記録者: ${esc(workers.join('、')||'（未設定）')}</div>`
+    + (other?`<div class="noteBox" style="background:#fdecea;border-color:#f0b7b1;color:#8c1d18;">
+        ⚠ この控えは<b>別の現場</b>のものです（いま開いているのは「${esc(activeSiteName())}」）。<br>
+        合流すると混ざります。ふつうは<b>［新しい現場として読む］</b>を選んでください。</div>`:'');
+  const nb=document.getElementById('mergeNewBtn');
+  if(nb){
+    const full=siteFull();
+    nb.disabled=full;
+    nb.style.opacity=full?'.45':'';
+    nb.textContent=full?`新しい現場として読む（${siteMax()}件で満杯）`:'新しい現場として読む';
+  }
+  openPanel('mergePanel');
+}
+function cancelMerge(){ pendingMerge=null; closePanel('mergePanel'); }
+async function doMergeHere(){
+  if(!pendingMerge) return;
+  const d=pendingMerge.data;
+  pendingMerge=null; closePanel('mergePanel');
+  await pushSnapshot(snapshotJson());
+  const r=mergeStore(d);
+  clearUndoStacks();
+  invalidatePtMap(); invalidatePlotMap();
+  save(); updateActionbar(); updateListCount(); draw();
+  alert(`いまの現場「${activeSiteName()}」へ読み込みました。\n\n`
+    +`境界点: ${r.addP}件を追加（重複 ${r.skipP}件は飛ばしました）\n`
+    +`そのうち記録の入った点: ${r.recP}件\n`
+    +`同じ点に既に記録があってそのままにした: ${r.keepP}件\n`
+    +`基準点 ${r.addRef} / 画地 ${r.addL} / 計測線 ${r.addR} / メモ ${r.addS} / ファイル ${r.addI}`);
+}
+async function doMergeAsNew(){
+  if(!pendingMerge) return;
+  const {file, data:d}=pendingMerge;
+  const base=(d.siteName||file.name.replace(/\.[^.]+$/,'')||'現場').slice(0,30);
+  const name=prompt('新しい現場の名前を入れてください。', base);
+  if(name===null) return;
+  pendingMerge=null; closePanel('mergePanel');
+  const rec=await createSite(name, d);
+  if(!rec) return;
+  const c=progCounts();
+  alert(`現場「${rec.name}」として読み込みました。\n\n`
+    +`境界点 ${c.all}（記録済み ${c.done}）／画地 ${store.lines.length}／計測線 ${store.routes.length}`);
+}
 function mergeStore(d){
   const r={addP:0,skipP:0,recP:0,keepP:0,addRef:0,addL:0,addR:0,addS:0,addI:0};
   const iid=new Set(store.imports.map(x=>x.id));
@@ -2015,30 +2541,51 @@ function mergeStore(d){
   for(const x of (d.strokes||[])){ const k=JSON.stringify(x); if(skey.has(k)) continue; store.strokes.push(x); skey.add(k); r.addS++; }
   return r;
 }
-async function clearAll(){
+/* いまの現場の中身だけを空にする（他の現場・端末の設定は残る） */
+async function clearSite(){
   const c=progCounts();
-  if(!confirm(`【削除するもの】この端末の作業データすべて\n`
-    + `　境界点${c.all}（記録済み${c.done}）/ 画地${store.lines.length} / 計測線${store.routes.length} / 基準点${store.refPoints.length} / メモ${store.strokes.length}\n`
-    + `【残るもの】作業者名・系番号・杭種などの設定は残ります\n`
-    + `【元に戻せるか】［取消］では戻せません。削除直前の状態を自動控えに残すので、そこからなら戻せます\n\n`
-    + `削除しますか?`)) return;
-  if(!confirm('本当に削除しますか?　この操作は［取消］では戻せません。')) return;
+  if(!confirm(`【空にするもの】現場「${activeSiteName()}」の中身\n`
+    + `　境界点${c.all}（記録済み${c.done}）／画地${store.lines.length}／計測線${store.routes.length}／基準点${store.refPoints.length}／メモ${store.strokes.length}\n`
+    + `【残るもの】ほかの現場、作業者名・杭種などの端末の設定、地図の控え\n`
+    + `【元に戻せるか】［取消］では戻せません。直前の状態を自動控えに残すので、そこからなら戻せます\n\n`
+    + `空にしますか?`)) return;
+  if(!confirm(`本当に「${activeSiteName()}」を空にしますか?`)) return;
   await pushSnapshot(snapshotJson());
-  store.points=[]; store.refPoints=[]; store.lines=[]; store.routes=[]; store.strokes=[]; store.imports=[];
-  const keep=store.settings;
-  store.settings=Object.assign({}, DEFAULT_SETTINGS, {
-    zone:keep.zone, worker:keep.worker, fontScale:keep.fontScale,
-    stakes:(keep.stakes||DEFAULT_STAKES).slice(), stake:keep.stake,
-    thinPt:keep.thinPt, thinName:keep.thinName, thinDist:keep.thinDist,
-    baseMap:keep.baseMap, mockGps:keep.mockGps, mockDate:null, lastExport:null
-  });
-  store.layers={pt:true,ref:true,line:true,route:true,dist:true,memo:true,base:true,map:true,
-                hiddenImports:[],stNone:true,stDa:true,stKi:true};
-  state.currentRoute=[];
+  const zone=store.settings.zone;
+  resetStoreData();
+  store.settings.zone=zone;
+  fillDefaults();
   clearUndoStacks();
-  invalidatePtMap(); invalidatePlotMap();
-  save(); updateMockLabel(); updateActionbar(); updateListCount(); draw();
-  toast('全データを削除しました（自動バックアップから復元できます）');
+  savePending=true; await flushSave();
+  updateMockLabel(); afterSiteChange();
+  toast(`「${activeSiteName()}」を空にしました（自動控えから復元できます）`);
+}
+/* 全部の現場を消して、空の「現場１」だけにする */
+async function clearAllSites(){
+  const n=siteList().length;
+  const tot=siteList().reduce((a,x)=>a+(x.pts||0),0);
+  if(!confirm(`【削除するもの】この端末の<b>全${n}現場</b>すべて\n`.replace(/<[^>]+>/g,'')
+    + `　境界点は合わせて約${tot}点。自動控えもすべて消えます\n`
+    + `【残るもの】作業者名・杭種・文字サイズなどの端末の設定と、地図の控え\n`
+    + `【元に戻せるか】戻せません\n\n`
+    + `削除しますか?`)) return;
+  if(!confirm(`本当に全${n}現場を消しますか?　この操作は戻せません。`)) return;
+  if(!confirm('最終確認です。すべての現場の記録が消えます。よろしいですか?')) return;
+  for(const x of siteList()){
+    try{ await idbReq(DB_STORE,'readwrite',st=>st.delete(siteKey(x.id))); }catch(e){}
+  }
+  try{ await idbReq('snapshots','readwrite',st=>st.clear()); }catch(e){}
+  try{ await idbReq(DB_STORE,'readwrite',st=>st.delete(DB_KEY)); }catch(e){}   // v0.6以前の名残
+  try{ localStorage.removeItem(LS_KEY); localStorage.removeItem(LEGACY_LS_KEY); }catch(e){}
+  const id=newId(), now=new Date().toISOString();
+  sites={ list:[{ id, name:'現場１', created:now, updated:now, pts:0, done:0, lines:0 }], active:id };
+  resetStoreData();
+  fillDefaults();
+  clearUndoStacks();
+  lastSavedJson='';
+  savePending=true; await flushSave();
+  updateMockLabel(); afterSiteChange();
+  toast(`全${n}現場を削除しました`);
 }
 <!--@SRC:5309-5314-->
 
@@ -2127,6 +2674,7 @@ const ICON_URL=(()=>{
     fitToBox(store.points.map(p=>p.x), store.points.map(p=>p.y));
   }
   state.mode='view';
+  updateSiteChip();
   renderRibbon();
   updateActionbar();
   resize();

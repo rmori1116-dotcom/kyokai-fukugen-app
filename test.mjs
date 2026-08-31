@@ -56,7 +56,7 @@ await page.waitForTimeout(300);
 
 /* ---------- 1. 起動 ---------- */
 ok('起動時にエラーが出ない', errors.length === 0, errors.slice(0, 3));
-eq('版数', await page.evaluate(() => APP_VERSION), 'v0.5');
+eq('版数', await page.evaluate(() => APP_VERSION), 'v0.7');
 eq('アプリ名', await page.evaluate(() => APP_NAME), '境界復元');
 eq('専用IndexedDB名', await page.evaluate(() => DB_NAME), 'kyokaiFukugenMap');
 eq('専用localStorage名', await page.evaluate(() => LS_KEY), 'kyokaiFukugenMapData_v1');
@@ -450,7 +450,7 @@ eq('既設を消すと7点減る', filt.hideKi, filt.all - 7);
 const round = await page.evaluate(async () => {
   savePending = true;
   await flushSave();
-  const json = await idbGet(DB_STORE, DB_KEY);
+  const json = await idbGet(DB_STORE, siteKey(sites.active));   // v0.7から現場ごとのキー
   const d = JSON.parse(json);
   return { pts: d.points.length, lines: d.lines.length, refs: d.refPoints.length,
            routes: d.routes.length, imports: d.imports.length,
@@ -643,10 +643,19 @@ eq('10列CSVを再取込すると点番を保持', csvOut.parsed[0].no, csvOut.n
 eq('10列CSVを再取込すると点名を保持', csvOut.parsed[0].name, csvOut.rawName);
 eq('10列CSVを再取込すると杭種を保持', csvOut.parsed[0].stake, 'アルミプレート');
 ok('データタブに復元点CSVボタンがある', csvOut.hasButton);
+/* ヘッドレスChromiumは blob ダウンロードの download 属性を suggestedFilename() に載せない。
+   ダウンロードが実際に起きたことは download イベントで、保存名は渡した値で確かめる。 */
 const csvDownloadWait = page2.waitForEvent('download');
-await page2.evaluate(() => exportRestorationCsv());
+const csvName = await page2.evaluate(() => {
+  let got = null;
+  const org = window.download;
+  window.download = (blob, name) => { got = name; return org(blob, name); };
+  try { exportRestorationCsv(); } finally { window.download = org; }
+  return got;
+});
 const csvDownload = await csvDownloadWait;
-ok('CSVファイルを実際にダウンロードできる', /^境界復元_復元点_\d{4}-\d{2}-\d{2}\.csv$/.test(csvDownload.suggestedFilename()), csvDownload.suggestedFilename());
+ok('CSVファイルを実際にダウンロードできる', !!csvDownload, String(csvDownload));
+ok('CSVの保存名が日付つき', /^境界復元_復元点_\d{4}-\d{2}-\d{2}\.csv$/.test(csvName || ''), csvName);
 ok('ダウンロードしたCSVは空ではない', readFileSync(await csvDownload.path()).length > 100, await csvDownload.path());
 
 /* ---------- 20. レイヤ ---------- */
@@ -824,6 +833,531 @@ ok('縮小しすぎると「もっと拡大」と出る', zhint.tooFar.includes(
 ok('ちょうどよい範囲では出ない', !zhint.justOk.includes('これ以上') && !zhint.justOk.includes('もっと拡大'), zhint.justOk);
 ok('標準地図でも同じ範囲なら出ない', !zhint.stdOk.includes('これ以上') && !zhint.stdOk.includes('もっと拡大'), zhint.stdOk);
 
+/* ---------- 21g. 画地名（地番）の表示 ---------- */
+const plotLbl = await page2.evaluate(bytes => {
+  /* 前のテストで足し引きした分を消し、サンプルだけの状態にしてから確かめる */
+  store.points = []; store.refPoints = []; store.lines = [];
+  store.routes = []; store.imports = []; store.layers.hiddenImports = [];
+  invalidatePtMap(); invalidatePlotMap();
+  const txt = decodeText(new Uint8Array(bytes).buffer);
+  pendingImport = { file: { name: '画地サンプル.sim' }, parsed: parseSimaFull(txt), src: 'sima' };
+  importKind = 'bp';
+  document.getElementById('impName').value = '画地サンプル';
+  commitImport();
+
+  /* 描いた画地名を横取りして数える */
+  const org = window.drawPlotName;
+  let got = [];
+  window.drawPlotName = (cx, cy, text, px) => { got.push({ cx, cy, text, px }); };
+  const run = () => { got = []; draw(); return got.slice(); };
+
+  const out = {};
+  out.lines = store.lines.length;
+  out.layerOn = store.layers.plotName !== false;
+
+  // 1) 全体表示 … 4画地すべてに、その画地の真ん中（頂点の平均）へ出る
+  fitToBox(store.points.map(p => p.x), store.points.map(p => p.y));
+  const wide = run();
+  out.wideN = wide.length;
+  out.wideNames = wide.map(g => g.text).sort();
+  out.wideOnScreen = wide.every(g => g.cx >= 0 && g.cx <= W && g.cy >= 0 && g.cy <= H);
+  // 期待する真ん中を、テスト側で頂点から作り直して突き合わせる
+  const idx = ptIndex();
+  const want = {};
+  for (const l of store.lines) {
+    const ids = l.ptIds, n = ids.length, segs = l.closed ? n : n - 1;
+    let sx = 0, sy = 0, k = 0;
+    for (let i = 0; i < segs; i++) {
+      const a = idx.get(ids[i]), b = idx.get(ids[(i + 1) % n]);
+      if (!a || !b) continue;
+      const A = toScr(a.x, a.y);
+      sx += A[0]; sy += A[1]; k++;
+    }
+    want[l.name] = [sx / k, sy / k];
+  }
+  const offs = wide.map(g => {
+    const wv = want[g.text];
+    return wv ? Math.hypot(g.cx - wv[0], g.cy - wv[1]) : 999;
+  });
+  out.wideAtCentre = offs.filter(d => d < 12).length;
+  /* 真ん中がふさがって線の上へ逃げたものは、その画地自身の線に乗っていること */
+  out.wideOffCentreOnLine = wide.every(g => {
+    const wv = want[g.text];
+    if (wv && Math.hypot(g.cx - wv[0], g.cy - wv[1]) < 12) return true;
+    const l = store.lines.find(x => (String(x.name).trim() || ('画地' + x.no)) === g.text);
+    if (!l) return false;
+    const ids = l.ptIds, n = ids.length, segs = l.closed ? n : n - 1;
+    let best = 1e9;
+    for (let i = 0; i < segs; i++) {
+      const a = idx.get(ids[i]), b = idx.get(ids[(i + 1) % n]);
+      if (!a || !b) continue;
+      const A = toScr(a.x, a.y), B = toScr(b.x, b.y);
+      const dx = B[0] - A[0], dy = B[1] - A[1], l2 = dx * dx + dy * dy;
+      let t = l2 ? ((g.cx - A[0]) * dx + (g.cy - A[1]) * dy) / l2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      best = Math.min(best, Math.hypot(g.cx - (A[0] + t * dx), g.cy - (A[1] + t * dy)));
+    }
+    return best < 12;
+  });
+
+  // 2) 拡大 … 真ん中は画面の外でも、見えている線の真ん中に出る
+  const target = store.lines.find(l => l.name === '加津佐西部圃場整備');
+  fitToLine(target.id);
+  state.view.scale *= 9;
+  const near = run();
+  out.nearN = near.length;
+  const mine = near.find(g => g.text === target.name);
+  out.nearHas = !!mine;
+  out.nearOnScreen = !!mine && mine.cx >= 0 && mine.cx <= W && mine.cy >= 0 && mine.cy <= H;
+  // 真ん中（頂点の平均）は画面の外に出ているはず
+  {
+    const ids = target.ptIds, n = ids.length, segs = target.closed ? n : n - 1;
+    let sx = 0, sy = 0, k = 0, allIn = true;
+    const vis = [];
+    for (let i = 0; i < segs; i++) {
+      const a = idx.get(ids[i]), b = idx.get(ids[(i + 1) % n]);
+      if (!a || !b) continue;
+      const A = toScr(a.x, a.y), B = toScr(b.x, b.y);
+      sx += A[0]; sy += A[1]; k++;
+      if (A[0] < 0 || A[0] > W || A[1] < 0 || A[1] > H) allIn = false;
+      const c = clipSeg(A, B);
+      if (c) {
+        const len = Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]);
+        if (len > 0) vis.push({ a: c[0], b: c[1], len });
+      }
+    }
+    const ctr = [sx / k, sy / k];
+    out.centreOffScreen = !(ctr[0] >= 0 && ctr[0] <= W && ctr[1] >= 0 && ctr[1] <= H);
+    out.allIn = allIn;
+    // 見えている線に沿って、ラベルが何割の位置にあるか
+    let total = 0;
+    for (const v of vis) total += v.len;
+    out.visTotal = total;
+    let best = 1e9, acc = 0, at = 0, onLine = 1e9;
+    for (const v of vis) {
+      const dx = v.b[0] - v.a[0], dy = v.b[1] - v.a[1];
+      const l2 = dx * dx + dy * dy;
+      let t = l2 ? ((mine.cx - v.a[0]) * dx + (mine.cy - v.a[1]) * dy) / l2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(mine.cx - (v.a[0] + t * dx), mine.cy - (v.a[1] + t * dy));
+      if (d < best) { best = d; at = acc + t * v.len; }
+      onLine = Math.min(onLine, d);
+      acc += v.len;
+    }
+    out.distToLine = onLine;
+    out.ratio = total ? at / total : -1;
+  }
+
+  // 3) レイヤを消すと出ない
+  fitToBox(store.points.map(p => p.x), store.points.map(p => p.y));
+  store.layers.plotName = false;
+  out.offN = run().length;
+  store.layers.plotName = true;
+  out.backN = run().length;
+
+  // 4) 名前が空なら「画地N」
+  const save0 = target.name;
+  target.name = '   ';
+  fitToBox(store.points.map(p => p.x), store.points.map(p => p.y));
+  out.blank = run().map(g => g.text);
+  target.name = save0;
+
+  window.drawPlotName = org;
+  draw();
+  return out;
+}, simBytes);
+eq('取り込み直して画地は4件', plotLbl.lines, 4);
+eq('画地名レイヤは既定で表示', plotLbl.layerOn, true);
+eq('全体表示で4画地すべてに出る', plotLbl.wideN, 4);
+eq('出る名前はD00の区画名', plotLbl.wideNames.join(','), '加津佐津波見圃場整備,加津佐西部圃場整備,野田第４,野田第５');
+eq('全体表示のラベルは画面の中', plotLbl.wideOnScreen, true);
+ok('全体表示では画地の真ん中に置く', plotLbl.wideAtCentre >= 3, plotLbl.wideAtCentre);
+ok('真ん中がふさがった分はその画地の線の上へ逃がす', plotLbl.wideOffCentreOnLine, plotLbl.wideOffCentreOnLine);
+eq('拡大しても画地名が出る', plotLbl.nearHas, true);
+eq('拡大時のラベルも画面の中', plotLbl.nearOnScreen, true);
+eq('拡大時は画地の一部しか見えていない', plotLbl.allIn, false);
+eq('拡大時は真ん中が画面の外', plotLbl.centreOffScreen, true);
+ok('拡大時のラベルは画地線の上にある', plotLbl.distToLine < 12, plotLbl.distToLine);
+ok('拡大時は見えている線の真ん中', Math.abs(plotLbl.ratio - 0.5) < 0.02, plotLbl.ratio);
+eq('レイヤを消すと出ない', plotLbl.offN, 0);
+eq('戻すとまた出る', plotLbl.backN, 4);
+ok('名前が空なら画地番号で出す', plotLbl.blank.some(t => /^画地\d+$/.test(t)), plotLbl.blank);
+const plotDisp = await page2.evaluate(() => {
+  openDispLine();
+  const html = document.getElementById('dispPanel').textContent;
+  setDisp('plotNameColor', '#112233');
+  setDisp('plotNameSize', 'xl');
+  const v = { c: disp('plotNameColor'), s: disp('plotNameSize') };
+  resetDisp();
+  closePanel('dispPanel');
+  return { html, v, back: disp('plotNameColor') };
+});
+ok('線の表示設定に画地名の色がある', plotDisp.html.includes('画地名（地番）の色'), plotDisp.html.slice(0, 120));
+ok('線の表示設定に画地名の大きさがある', plotDisp.html.includes('画地名（地番）の大きさ'));
+eq('画地名の色を変えられる', plotDisp.v.c, '#112233');
+eq('画地名の大きさを変えられる', plotDisp.v.s, 'xl');
+eq('初期値に戻せる', plotDisp.back, '#3d2680');
+const plotLayerUi = await page2.evaluate(() => {
+  openLayers();
+  const t = document.getElementById('layerPanel').textContent;
+  closePanel('layerPanel');
+  return t;
+});
+ok('レイヤ画面に画地名（地番）がある', plotLayerUi.includes('画地名（地番）'));
+
+/* ---------- 21h. 地番名を取込ファイルごとに切り替える ---------- */
+const plotPerFile = await page2.evaluate(bytes => {
+  store.points = []; store.refPoints = []; store.lines = [];
+  store.routes = []; store.imports = [];
+  store.layers.hiddenImports = []; store.layers.hiddenPlotNames = [];
+  invalidatePtMap(); invalidatePlotMap();
+  const txt = decodeText(new Uint8Array(bytes).buffer);
+  const load = nm => {
+    pendingImport = { file: { name: nm + '.sim' }, parsed: parseSimaFull(txt), src: 'sima' };
+    importKind = 'bp';
+    document.getElementById('impName').value = nm;
+    commitImport();
+    return store.imports[store.imports.length - 1].id;
+  };
+  const a = load('図面A'), b = load('図面B');
+  fitToBox(store.points.map(p => p.x), store.points.map(p => p.y));
+  const org = window.drawPlotName;
+  let got = [];
+  window.drawPlotName = (cx, cy, t) => { got.push(t); };
+  const run = () => { got = []; draw(); return got.length; };
+
+  const out = { imports: store.imports.length, lines: store.lines.length };
+  const eligible = () => store.lines.filter(isPlotNameVisible).length;
+  out.bothEligible = eligible();
+  out.both = run();
+  store.layers.hiddenPlotNames = [a];
+  out.hideAEligible = eligible();
+  out.hideA = run();
+  out.aLinesHidden = store.lines.filter(l => l.impId === a).every(l => !isPlotNameVisible(l));
+  out.bStillOn = store.lines.filter(l => l.impId === b).every(l => isPlotNameVisible(l));
+  // 線そのものは消えない
+  out.aLineStillDrawn = store.lines.filter(l => l.impId === a).every(l => isLineVisible(l));
+  // 取込ファイルごと非表示にすれば地番名も出ない
+  store.layers.hiddenPlotNames = [];
+  store.layers.hiddenImports = [b];
+  out.hideFileB = run();
+  store.layers.hiddenImports = [];
+  // 全体スイッチを切るとどれも出ない
+  store.layers.plotName = false;
+  out.masterOff = run();
+  store.layers.plotName = true;
+  out.backOnEligible = eligible();
+  out.backOn = run();
+  // 画地を持つファイルだけが切替の対象
+  out.withLines = importsWithLines().length;
+  importKind = 'ref';
+  pendingImport = { file: { name: '基準点.sim' }, parsed: parseSimaFull(txt), src: 'sima' };
+  document.getElementById('impName').value = '基準点';
+  commitImport();
+  out.withLinesAfterRef = importsWithLines().length;
+  out.importsAfterRef = store.imports.length;
+
+  window.drawPlotName = org;
+  openLayers();
+  out.panel = document.getElementById('plotNameLayers').textContent;
+  closePanel('layerPanel');
+  draw();
+  return out;
+}, simBytes);
+eq('2ファイル取り込んだ', plotPerFile.imports, 2);
+eq('画地は8件', plotPerFile.lines, 8);
+eq('どちらも出ているときは8画地ぶんが対象', plotPerFile.bothEligible, 8);
+ok('地図にも出ている', plotPerFile.both > 0, plotPerFile.both);
+eq('片方を消すと対象は4画地', plotPerFile.hideAEligible, 4);
+eq('地図に出る数も4件になる', plotPerFile.hideA, 4);
+eq('消した側の地番名は出ない', plotPerFile.aLinesHidden, true);
+eq('もう片方は出たまま', plotPerFile.bStillOn, true);
+eq('地番名を消しても画地の線は残る', plotPerFile.aLineStillDrawn, true);
+eq('ファイルごと非表示なら地番名も出ない', plotPerFile.hideFileB, 4);
+eq('全体スイッチを切るとどれも出ない', plotPerFile.masterOff, 0);
+eq('戻すと対象は8画地に戻る', plotPerFile.backOnEligible, 8);
+ok('地図にもまた出る', plotPerFile.backOn >= plotPerFile.hideA, plotPerFile.backOn);
+eq('切替の対象は画地を持つファイルだけ', plotPerFile.withLines, 2);
+eq('基準点を足しても切替の対象は増えない', plotPerFile.withLinesAfterRef, 2);
+eq('取込ファイル自体は3件になる', plotPerFile.importsAfterRef, 3);
+ok('レイヤ画面の地番名の節に2ファイル出る',
+   plotPerFile.panel.includes('図面A') && plotPerFile.panel.includes('図面B'), plotPerFile.panel.slice(0, 120));
+ok('地番名の節に基準点は出ない', !plotPerFile.panel.includes('基準点'), plotPerFile.panel.slice(0, 160));
+
+/* ---------- 21i. 現場（プロジェクト）別保存 ---------- */
+const siteBasics = await page2.evaluate(async bytes => {
+  const out = {};
+  out.startSites = siteList().length;
+  out.startName = activeSiteName();
+  out.max = siteMax();
+  const first = sites.active;
+
+  // いまの現場に中身がある状態から、新しい現場を作る
+  const before = progCounts().all;
+  out.before = before;
+  const rec = await createSite('第二現場');
+  out.made = !!rec && rec.name === '第二現場';
+  out.sitesNow = siteList().length;
+  out.emptyAfterCreate = { pts: store.points.length, lines: store.lines.length,
+                           routes: store.routes.length, imports: store.imports.length };
+  out.activeIsNew = sites.active === rec.id;
+
+  // 新しい現場へ取り込む
+  const txt = decodeText(new Uint8Array(bytes).buffer);
+  pendingImport = { file: { name: 'b.sim' }, parsed: parseSimaFull(txt), src: 'sima' };
+  importKind = 'bp';
+  document.getElementById('impName').value = '第二現場データ';
+  commitImport();
+  setRec(store.points[0].id, 'ki', '金属鋲');
+  savePending = true; await flushSave();
+  out.secondPts = store.points.length;
+  out.secondDone = progCounts().done;
+
+  // 元の現場へ戻すと、元の中身がそのまま出る
+  await switchSite(first);
+  out.backPts = store.points.length;
+  out.backName = activeSiteName();
+  out.backImports = store.imports.map(i => i.name);
+
+  // もう一度、第二現場へ
+  await switchSite(rec.id);
+  out.againPts = store.points.length;
+  out.againDone = progCounts().done;
+  out.againImports = store.imports.map(i => i.name);
+
+  // 目録に点数が入っている
+  out.meta = siteList().map(x => ({ name: x.name, pts: x.pts, done: x.done }));
+  return out;
+}, simBytes);
+eq('はじめは1現場', siteBasics.startSites, 1);
+eq('その名前は現場１', siteBasics.startName, '現場１');
+eq('上限の初期値は5件', siteBasics.max, 5);
+eq('新しい現場を作れる', siteBasics.made, true);
+eq('2現場になる', siteBasics.sitesNow, 2);
+eq('作った現場は空', siteBasics.emptyAfterCreate.pts, 0);
+eq('作った現場に画地も無い', siteBasics.emptyAfterCreate.lines, 0);
+eq('作った現場に取込ファイルも無い', siteBasics.emptyAfterCreate.imports, 0);
+eq('作った現場が開く', siteBasics.activeIsNew, true);
+eq('第二現場に取り込める', siteBasics.secondPts, 2397);
+eq('第二現場の記録は1点', siteBasics.secondDone, 1);
+eq('元の現場へ戻すと元の点が出る', siteBasics.backPts, siteBasics.before);
+eq('元の現場の名前', siteBasics.backName, '現場１');
+ok('元の現場の取込ファイルが残っている',
+   siteBasics.backImports.includes('図面A'), siteBasics.backImports);
+eq('第二現場へ戻すと点も戻る', siteBasics.againPts, 2397);
+eq('第二現場の記録も戻る', siteBasics.againDone, 1);
+eq('第二現場の取込ファイル', siteBasics.againImports.join(','), '第二現場データ');
+ok('目録に点数が入る', siteBasics.meta.every(m => m.pts > 0), siteBasics.meta);
+
+/* 現場ごと・端末共通の切り分け */
+const siteSplit = await page2.evaluate(async () => {
+  const out = {};
+  const ids = siteList().map(x => x.id);
+  await switchSite(ids[0]);
+  store.settings.worker = '端末の作業者';
+  store.settings.zone = 1;
+  setDisp('lineColor', '#111111');
+  store.settings.thinDist = 33;
+  savePending = true; await flushSave();
+
+  await switchSite(ids[1]);
+  out.workerKept = store.settings.worker;      // 端末共通 → 引き継ぐ
+  out.thinKept = store.settings.thinDist;      // 端末共通 → 引き継ぐ
+  out.dispHere = disp('lineColor');            // 現場ごと → 既定に戻る
+  store.settings.zone = 9;
+  setDisp('lineColor', '#992200');
+  savePending = true; await flushSave();
+
+  await switchSite(ids[0]);
+  out.zone0 = store.settings.zone;
+  out.disp0 = disp('lineColor');
+  await switchSite(ids[1]);
+  out.zone1 = store.settings.zone;
+  out.disp1 = disp('lineColor');
+  return out;
+});
+eq('作業者名は端末で共通', siteSplit.workerKept, '端末の作業者');
+eq('間引きの数値も端末で共通', siteSplit.thinKept, 33);
+eq('表示設定は現場ごと（新しい現場は既定）', siteSplit.dispHere, '#5a3ea8');
+eq('座標系は現場ごと（1系）', siteSplit.zone0, 1);
+eq('座標系は現場ごと（9系）', siteSplit.zone1, 9);
+eq('表示設定は現場ごと（現場1）', siteSplit.disp0, '#111111');
+eq('表示設定は現場ごと（現場2）', siteSplit.disp1, '#992200');
+
+/* 上限・名前変更・削除 */
+const siteLimit = await page2.evaluate(async () => {
+  const out = {};
+  const org = window.alert, orgC = window.confirm;
+  let said = '';
+  window.alert = m => { said = String(m); };
+  window.confirm = () => true;
+  while (siteList().length < siteMax()) await createSite('');
+  out.atMax = siteList().length;
+  const over = await createSite('はみ出し');
+  out.overIsNull = over === null;
+  out.saidMax = said.includes('5件までです');
+  out.stillMax = siteList().length;
+
+  // 上限より小さくは設定できない
+  openSettings();
+  document.getElementById('setSiteMax').value = '2';
+  saveSettings();
+  out.maxAfterTryLower = siteMax();
+
+  // 上限を増やせば作れる
+  openSettings();
+  document.getElementById('setSiteMax').value = '7';
+  saveSettings();
+  out.maxUp = siteMax();
+  const more = await createSite('6件目');
+  out.madeSixth = !!more;
+
+  // 名前を変える
+  await renameSite(sites.active, '名前を変えた現場');
+  out.renamed = activeSiteName();
+
+  // 削除
+  const victim = siteList().find(x => x.id !== sites.active);
+  const n0 = siteList().length;
+  await removeSite(victim.id);
+  out.afterDelete = siteList().length;
+  out.deletedGone = !siteById(victim.id);
+  out.stillOpen = activeSiteName();
+
+  // いま開いている現場を消すと、別の現場が開く
+  const cur = sites.active;
+  await removeSite(cur);
+  out.afterDeleteActive = siteList().length;
+  out.movedOn = sites.active !== cur;
+  out.n0 = n0;
+  window.alert = org; window.confirm = orgC;
+  return out;
+});
+eq('5件で満杯になる', siteLimit.atMax, 5);
+eq('6件目は作れない', siteLimit.overIsNull, true);
+ok('上限だと知らせる', siteLimit.saidMax, siteLimit.saidMax);
+eq('件数は増えない', siteLimit.stillMax, 5);
+eq('いまの件数より小さい上限は入らない', siteLimit.maxAfterTryLower, 5);
+eq('上限を7件に増やせる', siteLimit.maxUp, 7);
+eq('増やせば作れる', siteLimit.madeSixth, true);
+eq('名前を変えられる', siteLimit.renamed, '名前を変えた現場');
+eq('削除で1件減る', siteLimit.afterDelete, 5);
+eq('消えている', siteLimit.deletedGone, true);
+eq('開いている現場は変わらない', siteLimit.stillOpen, '名前を変えた現場');
+eq('開いている現場を消すと別の現場へ移る', siteLimit.movedOn, true);
+eq('さらに1件減る', siteLimit.afterDeleteActive, 4);
+
+/* 自動控えは現場ごと */
+const siteSnaps = await page2.evaluate(async () => {
+  /* 別の現場でも1件控えを作ってから確かめる */
+  const here = sites.active;
+  const other = siteList().find(x => x.id !== here);
+  if (other) {
+    await switchSite(other.id);
+    await pushSnapshot(snapshotJson());
+    await switchSite(here);
+  }
+  const all = await idbReq('snapshots', 'readonly', s => s.getAll());
+  const mine = all.filter(r => (r.siteId || '') === (sites.active || ''));
+  const others = all.filter(r => r.siteId && r.siteId !== sites.active);
+  const orphan = all.filter(r => !r.siteId);
+  await openSnapshots();
+  const shown = document.querySelectorAll('#snapList .menuItem').length;
+  closePanel('snapPanel');
+  return { total: all.length, mine: mine.length, others: others.length,
+           orphan: orphan.length, shown };
+});
+eq('控えには現場が付く', siteSnaps.orphan, 0);
+ok('他の現場の控えも残っている', siteSnaps.others > 0, siteSnaps);
+eq('画面に出るのはいまの現場のぶんだけ', siteSnaps.shown, siteSnaps.mine);
+
+/* この現場を空にする / 全現場を消す */
+const siteClear = await page2.evaluate(async bytes => {
+  const orgC = window.confirm; window.confirm = () => true;
+  const out = {};
+  const txt = decodeText(new Uint8Array(bytes).buffer);
+  pendingImport = { file: { name: 'c.sim' }, parsed: parseSimaFull(txt), src: 'sima' };
+  importKind = 'bp';
+  document.getElementById('impName').value = '消す前';
+  commitImport();
+  const keeper = siteList().find(x => x.id !== sites.active);
+  const keeperPts = keeper.pts;
+  out.n0 = siteList().length;
+  await clearSite();
+  out.emptied = { pts: store.points.length, lines: store.lines.length, imports: store.imports.length };
+  out.sitesKept = siteList().length;
+  out.otherKept = siteById(keeper.id).pts === keeperPts;
+  out.workerKept = store.settings.worker;
+
+  await clearAllSites();
+  out.afterAll = siteList().length;
+  out.afterAllName = activeSiteName();
+  out.afterAllPts = store.points.length;
+  out.workerAfterAll = store.settings.worker;   // 端末の設定は残る
+  const snaps = await idbReq('snapshots', 'readonly', s => s.getAll());
+  out.snapsAfterAll = snaps.length;
+  window.confirm = orgC;
+  return out;
+}, simBytes);
+eq('空にしても現場の数は変わらない', siteClear.sitesKept, siteClear.n0);
+eq('中身は空になる', siteClear.emptied.pts, 0);
+eq('画地も消える', siteClear.emptied.lines, 0);
+eq('取込ファイルも消える', siteClear.emptied.imports, 0);
+eq('他の現場は無事', siteClear.otherKept, true);
+eq('作業者名は残る', siteClear.workerKept, '端末の作業者');
+eq('全現場を消すと1件になる', siteClear.afterAll, 1);
+eq('その名前は現場１', siteClear.afterAllName, '現場１');
+eq('中身は空', siteClear.afterAllPts, 0);
+eq('端末の設定は残る', siteClear.workerAfterAll, '端末の作業者');
+eq('自動控えも消える', siteClear.snapsAfterAll, 0);
+
+/* ---------- 21j. IDが重ならないこと ----------
+   数千点を一度に作るので、IDが1件でも重なると画地の辺や記録が別の点に付いてしまう。 */
+const idUniq = await page2.evaluate(bytes => {
+  store.points = []; store.refPoints = []; store.lines = [];
+  store.routes = []; store.imports = [];
+  invalidatePtMap(); invalidatePlotMap();
+  const txt = decodeText(new Uint8Array(bytes).buffer);
+  for (const [nm, kind] of [['A', 'bp'], ['B', 'bp'], ['C', 'ref']]) {
+    pendingImport = { file: { name: nm + '.sim' }, parsed: parseSimaFull(txt), src: 'sima' };
+    importKind = kind;
+    document.getElementById('impName').value = nm;
+    commitImport();
+  }
+  const all = [...store.points, ...store.refPoints].map(p => p.id)
+    .concat(store.lines.map(l => l.id), store.imports.map(i => i.id));
+  const uniq = new Set(all);
+  /* 画地の辺が、その画地自身の点を指しているか（IDが重なるとここが崩れる） */
+  const idx = ptIndex();
+  let wrong = 0;
+  for (const l of store.lines) {
+    for (const id of l.ptIds) {
+      if (!id) continue;
+      const p = idx.get(id);
+      if (!p || p.impId !== l.impId) wrong++;
+    }
+  }
+  /* 辺長も引き続き一致するか */
+  let worst = 0;
+  for (const l of store.lines) {
+    const ids = l.ptIds, n = ids.length, segs = l.closed ? n : n - 1;
+    for (let i = 0; i < segs; i++) {
+      const a = idx.get(ids[i]), b = idx.get(ids[(i + 1) % n]);
+      if (!a || !b || !isFinite(l.dists[i])) continue;
+      worst = Math.max(worst, Math.abs(distBetween(a, b) - l.dists[i]));
+    }
+  }
+  /* 生成そのものも確かめる */
+  const made = new Set();
+  for (let i = 0; i < 20000; i++) made.add(newId());
+  return { total: all.length, uniq: uniq.size, wrong, worst, made: made.size };
+}, simBytes);
+eq('3ファイルぶんのIDを作った', idUniq.total, 2397 * 2 + 2397 + 8 + 3);
+eq('IDが1件も重ならない', idUniq.uniq, idUniq.total);
+eq('画地の辺は自分のファイルの点を指す', idUniq.wrong, 0);
+ok('辺長も一致したまま', idUniq.worst < 0.001, idUniq.worst);
+eq('2万件つくっても重ならない', idUniq.made, 20000);
+
 /* ---------- 22. 描画がエラーなく回る ---------- */
 const drawOk = await page2.evaluate(() => {
   store.settings.thinPt = 300; store.settings.thinName = 150; store.settings.thinDist = 40;
@@ -915,6 +1449,124 @@ ok('保存ボタンは52px以上', touchUi.save.h >= 52, touchUi.save);
 ok('狭い画面では項目名が入力欄の上に回る', parseFloat(touchUi.labelWidth) > 300, touchUi.labelWidth);
 ok('タッチ時の指ぶれを14pxまで許容', readFileSync(APP, 'utf8').includes("e.pointerType==='touch'?14:8"));
 await mobileCtx.close();
+
+/* ---------- 24. v0.6までのデータが「現場１」へ移ること ----------
+   いちばん怖いのは移行の失敗なので、専用のページで作り直して確かめる。 */
+const page3 = await ctx.newPage();
+const errors3 = [];
+page3.on('pageerror', e => errors3.push(String(e)));
+await page3.addInitScript(() => { self.__noTiles = true; });
+await page3.goto(BASE);
+await page3.waitForFunction(() => typeof store === 'object' && typeof siteList === 'function');
+await page3.waitForTimeout(200);
+
+/* v0.6の姿（'store' キーに1現場ぶん）を作り、現場の仕組みを消す */
+const seeded = await page3.evaluate(async bytes => {
+  const txt = decodeText(new Uint8Array(bytes).buffer);
+  store.points = []; store.refPoints = []; store.lines = [];
+  store.routes = []; store.strokes = []; store.imports = [];
+  invalidatePtMap(); invalidatePlotMap();
+  pendingImport = { file: { name: '旧データ.sim' }, parsed: parseSimaFull(txt), src: 'sima' };
+  importKind = 'bp';
+  document.getElementById('impName').value = '引き継ぎ確認';
+  commitImport();
+  store.settings.worker = '旧作業者';
+  store.settings.zone = 12;
+  setRec(store.points[0].id, 'da', '金属標');
+  setRec(store.points[1].id, 'ki', '木杭');
+  setDisp('lineColor', '#0088aa');
+  /* v0.6の flushSave は store 全体を 'store' キーへ入れていた */
+  const legacy = JSON.stringify(store);
+  await idbReq(DB_STORE, 'readwrite', st => st.clear());
+  await idbPut(DB_STORE, legacy, DB_KEY);
+  await idbReq('snapshots', 'readwrite', st => st.clear());
+  /* 現場が付いていない古い控えも1件置く */
+  await idbPut('snapshots', { id: new Date().toISOString(), date: realTodayStr(),
+                              json: legacy, pt: store.points.length, rt: 0, st: 0 });
+  return { pts: store.points.length, lines: store.lines.length,
+           done: progCounts().done, bytes: legacy.length };
+}, simBytes);
+eq('移行のもとになるデータを用意した', seeded.pts, 2397);
+eq('画地も4件', seeded.lines, 4);
+eq('記録も2点', seeded.done, 2);
+
+await page3.reload();
+await page3.waitForFunction(() => typeof store === 'object' && siteList().length > 0);
+await page3.waitForTimeout(400);
+const mig = await page3.evaluate(async () => ({
+  sites: siteList().length,
+  name: activeSiteName(),
+  pts: store.points.length,
+  lines: store.lines.length,
+  done: progCounts().done,
+  imports: store.imports.map(i => i.name),
+  worker: store.settings.worker,
+  zone: store.settings.zone,
+  lineColor: disp('lineColor'),
+  chip: document.getElementById('siteChip').textContent,
+  meta: siteList()[0],
+  siteRec: !!(await idbGet(DB_STORE, siteKey(sites.active))),
+  legacyKept: !!(await idbGet(DB_STORE, DB_KEY)),
+  snapsAdopted: (await idbReq('snapshots', 'readonly', s => s.getAll())).every(r => !!r.siteId),
+}));
+ok('移行でエラーが出ない', errors3.length === 0, errors3.slice(0, 3));
+eq('現場は1件になる', mig.sites, 1);
+eq('その名前は現場１', mig.name, '現場１');
+eq('境界点がそのまま入る', mig.pts, 2397);
+eq('画地もそのまま入る', mig.lines, 4);
+eq('記録もそのまま残る', mig.done, 2);
+eq('取込ファイルも残る', mig.imports.join(','), '引き継ぎ確認');
+eq('作業者名も引き継ぐ', mig.worker, '旧作業者');
+eq('座標系も引き継ぐ', mig.zone, 12);
+eq('表示設定も引き継ぐ', mig.lineColor, '#0088aa');
+eq('ヘッダーに現場名が出る', mig.chip, '現場１');
+eq('目録に点数が入る', mig.meta.pts, 2397);
+eq('目録に記録数が入る', mig.meta.done, 2);
+eq('現場ごとのキーへ書き直される', mig.siteRec, true);
+eq('念のため旧キーは消さずに残す', mig.legacyKept, true);
+eq('古い控えも現場に結び付ける', mig.snapsAdopted, true);
+
+/* もう一度開いても二重に移行しない */
+await page3.reload();
+await page3.waitForFunction(() => typeof store === 'object' && siteList().length > 0);
+await page3.waitForTimeout(300);
+const mig2 = await page3.evaluate(() => ({ sites: siteList().length, pts: store.points.length,
+                                           name: activeSiteName(), done: progCounts().done }));
+eq('開き直しても現場は1件のまま', mig2.sites, 1);
+eq('点も増えない', mig2.pts, 2397);
+eq('記録も変わらない', mig2.done, 2);
+eq('名前も変わらない', mig2.name, '現場１');
+
+/* ---------- 25. 控えを「新しい現場として読む」 ---------- */
+const asNew = await page3.evaluate(async () => {
+  const orgP = window.prompt, orgA = window.alert;
+  window.prompt = (m, d) => '控えから作った現場';
+  window.alert = () => {};
+  const out = {};
+  const payload = JSON.parse(siteJson());
+  payload.siteName = 'よその現場';
+  payload.siteId = 'xxxxx';
+  pendingMerge = { file: { name: 'よその現場_控え.json' }, data: payload };
+  showMergeChoice();
+  out.warned = document.getElementById('mergeInfo').textContent.includes('別の現場');
+  await doMergeAsNew();
+  out.sites = siteList().length;
+  out.name = activeSiteName();
+  out.pts = store.points.length;
+  out.done = progCounts().done;
+  /* 合流のほうも試す（いまの現場へ足しても二重にならない） */
+  pendingMerge = { file: { name: 'same.json' }, data: JSON.parse(siteJson()) };
+  await doMergeHere();
+  out.afterMerge = store.points.length;
+  window.prompt = orgP; window.alert = orgA;
+  return out;
+});
+ok('別の現場の控えだと警告する', asNew.warned, asNew.warned);
+eq('新しい現場として読める', asNew.sites, 2);
+eq('入れた名前になる', asNew.name, '控えから作った現場');
+eq('中身が入る', asNew.pts, 2397);
+eq('記録も入る', asNew.done, 2);
+eq('同じ控えを合流しても増えない', asNew.afterMerge, 2397);
 
 await browser.close();
 srv.close();

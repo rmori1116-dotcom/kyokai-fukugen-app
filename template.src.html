@@ -28,6 +28,15 @@
   #fixBar { max-width:62%; font-size:calc(var(--fsForm) - 2px); }
   /* 記録画面は一覧の上に出す（一覧の［記録］から開くため） */
   #recPanel { z-index:110; }
+  /* ヘッダーの現場名。押すと現場の一覧が開く */
+  #siteChip { flex:0 1 auto; min-width:0; max-width:34%; overflow:hidden; white-space:nowrap;
+    text-overflow:ellipsis; border:none; border-radius:9px; padding:3px 9px;
+    background:rgba(255,255,255,.2); color:#fff; font-size:11.5px; font-weight:bold; }
+  #siteChip:active { background:rgba(255,255,255,.34); }
+  .siteRow { border:1px solid #dfe4ea; border-radius:10px; padding:10px 12px; margin-bottom:8px; }
+  .siteRow.on { border-color:#1e73d2; background:#f2f7fe; }
+  .siteRow .nm { font-size:calc(var(--fsForm) + 1px); font-weight:bold; color:#1e3a5f; }
+  .siteRow .sub { font-size:calc(var(--fsForm) - 3px); color:#666c74; display:block; margin-top:2px; }
   .recBtn { flex:1; border:none; border-radius:10px; padding:16px 8px; font-size:calc(var(--fsMenu) + 1px);
     font-weight:bold; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,.2); }
   .recBtn.da { background:#d9261c; }
@@ -112,6 +121,7 @@
   <header>
     <span class="title" id="appTitle">境界復元 <small style="font-weight:normal;opacity:.7">地図版</small></span>
     <span id="modeLabel" style="display:none;"></span>
+    <button type="button" id="siteChip" onclick="openSites()" title="いま開いている現場">—</button>
     <span id="progChip" title="復元の進み具合">—</span>
     <span id="dateBadge" style="display:none;font-size:11.5px;background:#c9741a;padding:2px 7px;border-radius:9px;"></span>
     <span id="offlineBadge" style="display:none;font-size:11.5px;background:#555;padding:2px 7px;border-radius:9px;">オフライン</span>
@@ -145,6 +155,31 @@
   <div id="recBody"></div>
 </div></div>
 
+<!-- 現場（プロジェクト） -->
+<div class="panel" id="sitePanel"><div class="sheet">
+  <h2>現場<button type="button" class="close" onclick="closePanel('sitePanel')">✕</button></h2>
+  <div class="noteBox" id="siteInfo"></div>
+  <div id="siteRows"></div>
+  <div class="formRow" style="margin-top:10px;">
+    <label>新しい現場</label>
+    <input id="newSiteName" placeholder="現場の名前（例: 野田地区）" autocomplete="off">
+  </div>
+  <button type="button" class="saveBtn" id="newSiteBtn" onclick="addSite()">＋ この名前で現場を作る</button>
+  <p style="font-size:12.5px;color:#888;margin:10px 0 0;">開けるのは1つだけです。切り替えても、それまでの内容はその現場に残ります（<b>取消・やり直しの履歴だけ</b>は消えます）。杭種・作業者名・文字サイズ・地図の控えは<b>すべての現場で共通</b>です。</p>
+</div></div>
+
+<!-- 控えの読み込み方 -->
+<div class="panel" id="mergePanel"><div class="sheet">
+  <h2>控えの読み込み<button type="button" class="close" onclick="cancelMerge()">✕</button></h2>
+  <div id="mergeInfo"></div>
+  <div style="display:flex;flex-direction:column;gap:8px;">
+    <button type="button" class="saveBtn" style="margin:0;" onclick="doMergeHere()">いまの現場に合流する</button>
+    <button type="button" class="saveBtn" style="margin:0;background:#eef2f7;color:#1e3a5f;" id="mergeNewBtn" onclick="doMergeAsNew()">新しい現場として読む</button>
+    <button type="button" class="saveBtn" style="margin:0;background:#eee;color:#333;" onclick="cancelMerge()">やめる</button>
+  </div>
+  <p style="font-size:12.5px;color:#888;margin:10px 0 0;">「合流」は今あるものを消さずに足します。同じ点・同じ線は自動で飛ばします。</p>
+</div></div>
+
 <!-- 各種設定 -->
 <div class="panel" id="settingsPanel"><div class="sheet">
   <h2>各種設定<button type="button" class="close" onclick="closePanel('settingsPanel')">✕</button></h2>
@@ -158,6 +193,9 @@
   <p style="font-size:12.5px;color:#888;margin-bottom:8px;">打設・既設を記録するときに、その点へ記録されます。</p>
   <div class="formRow"><label>座標系（系番号）</label><select id="setZone"></select></div>
   <p style="font-size:12.5px;color:#888;margin-bottom:8px;">取り込むSIMA・CSVの座標系です。図面（GeoTIFF）にEPSGコードが含まれる場合はそちらが優先されます。</p>
+  <div class="formRow"><label>現場の上限</label>
+    <input id="setSiteMax" type="number" min="1" max="10" step="1"><span style="color:#888;font-size:13px;">件</span></div>
+  <p style="font-size:12.5px;color:#888;margin-bottom:8px;">端末に置いておける現場の数です（1〜10件）。<b>いま入っている件数より小さくはできません。</b></p>
   <h3 style="font-size:15px;margin:14px 0 6px;">点と距離の出しかた（多いときの間引き）</h3>
   <div class="formRow"><label>点を出す上限</label>
     <input id="setThinPt" type="number" min="20" max="5000" step="10"><span style="color:#888;font-size:13px;">点</span></div>
@@ -209,6 +247,9 @@
   <div id="otherLayers"></div>
   <h3 style="font-size:14.5px;margin:12px 0 6px;color:#1e3a5f;">状態でしぼる</h3>
   <div id="stateLayers"></div>
+  <h3 style="font-size:14.5px;margin:12px 0 6px;color:#1e3a5f;">地番名</h3>
+  <p style="font-size:12.5px;color:#888;margin:-2px 0 6px;">取り込んだファイルごとに、地図へ出す地番名を切り替えます。上の「画地名（地番）」が非表示のときは、どれも出ません。</p>
+  <div id="plotNameLayers"></div>
   <h3 style="font-size:14.5px;margin:12px 0 6px;color:#1e3a5f;">取り込んだファイル</h3>
   <div id="importLayers"></div>
   <p style="font-size:12.5px;color:#888;margin-top:10px;">非表示の点はタップでも選べません。<b>画面に入っている点が多いときは、点は自動で粒だけになります</b>（［各種設定］で変えられます）。</p>
@@ -317,10 +358,39 @@
     <tr><th>既設</th><td>現地に杭が<b>あった</b>点。地図では<b>青</b></td></tr>
     <tr><th>未</th><td>まだ現地を見ていない点。地図では<b>灰色</b></td></tr>
   </table>
+  <h3>現場（プロジェクト）ごとに分けて持てます</h3>
+  <p>端末の中に<b>現場を並べて</b>置けます（初期値は<b>5件</b>まで。「準備」タブの［各種設定］で1〜10件に変えられます）。<b>開けるのは1つだけ</b>で、切り替えると中身が丸ごと入れ替わります。</p>
+  <ul>
+    <li>「準備」タブの<b>［現場］</b>、またはヘッダーの<b>現場名</b>を押すと一覧が開きます。作る・開く・名前を変える・削除ができます</li>
+    <li>切り替えても、それまでの内容は<b>その現場に残ります</b>（自動保存です）。<b>［取消］［やり直し］の履歴だけ</b>は消えます</li>
+    <li>6件目を作ろうとすると止まります。どれかを削除するか、上限を増やしてください。<b>いま入っている件数より小さい上限にはできません</b></li>
+  </ul>
+  <table>
+    <tr><th>現場ごとに持つもの</th><th>端末で共通のもの</th></tr>
+    <tr><td>取込ファイル・境界点・画地の線・基準点</td><td>作業者名</td></tr>
+    <tr><td>打設・既設の記録</td><td>杭種の一覧</td></tr>
+    <tr><td>計測線・手書きメモ</td><td>文字・アイコンサイズ</td></tr>
+    <tr><td>レイヤの表示状態・最後に見ていた場所</td><td>点と距離の間引きの数値</td></tr>
+    <tr><td><b>座標系（系番号）</b></td><td>背景地図の種類</td></tr>
+    <tr><td>自動控え（10世代）</td><td>地図の控え（圏外そなえ）</td></tr>
+    <tr><td><b>表示設定（色・大きさ）</b></td><td></td></tr>
+  </table>
+  <p><b>地図の控えは現場をまたいで共通</b>です。「この現場のぶんだけ地図を消す」はできません（現場を消しても地図の控えは残ります。同じ地区ならそのまま使えます）。<b>図面（GeoTIFF）はもともと保存していない</b>ので、現場ごとには覚えられません。</p>
+  <p>v0.6までに入れたデータは、初回の起動で<b>「現場１」</b>として自動的に移ります。名前はあとから変えられます。</p>
+  <h3>控えの保存と読み込み</h3>
+  <p>「データ」タブの<b>［保存］</b>は<b>いまの現場だけ</b>をJSONにします（ファイル名に現場名が入ります）。</p>
+  <p><b>［控えを読む］</b>では、読み込み方を選べます。</p>
+  <ul>
+    <li><b>いまの現場に合流する</b> … 今あるものは消えず、同じ点・同じ線は自動で飛ばします</li>
+    <li><b>新しい現場として読む</b> … 控えの中身で現場を1つ作ります。端末を配ったり分担したときに使えます</li>
+  </ul>
+  <p>控えには現場の名前が入っているので、<b>別の現場の控えを合流しようとすると警告</b>が出ます。</p>
+  <p>消すときは2つに分かれています。<b>［この現場を空に］</b>は他の現場を残します。<b>［全現場を消す］</b>は端末の中の全現場を消します（確認が3回出ます）。どちらも作業者名・杭種などの端末の設定と、地図の控えは残ります。</p>
   <h3>取り込む</h3>
   <p>「準備」タブの<b>［境界点取込］</b>でSIMA（.sim）またはCSVを読み込みます。SIMAに<b>画地データ</b>（D00〜D99）が入っていれば、その<b>線もいっしょに取り込みます</b>。</p>
   <ul>
     <li>画地の線は<b>塗りつぶさず線だけ</b>で描きます（同じ点を何度も通る一筆書きのため、塗ると正しく出ません）。</li>
+    <li><b>画地名（地番）</b>を画地ごとに1つ出します。SIMAの<b>D00の2つ目の欄</b>（区画名）をそのまま使うので、そこに地番が入っていれば地番が出ます。</li>
     <li>SIMAの<b>C03に入っている辺長</b>をそのまま距離として出します。座標から計算し直さないので、元データと必ず一致します。</li>
     <li><b>［基準点取込］</b>は参考用です。<b>蛍光緑</b>で表示され、打設・既設の記録はできません（復元の対象ではないため）。</li>
   </ul>
@@ -331,6 +401,15 @@
     <li>記録済みの点をタップすると、いまの内容が出て<b>直したり取り消したり</b>できます。</li>
     <li>大ボタンの左右の<b>［取消］［やり直し］</b>で、記録の操作を50回まで戻せます。</li>
     <li>ヘッダーに<b>「打設○／既設○／未○」</b>が常に出ます。</li>
+  </ul>
+  <h3>画地名（地番）の出かた</h3>
+  <p>画地ごとに<b>1つだけ</b>名前を出します。「確認」タブの［レイヤ］→<b>「画地名（地番）」</b>で表示／非表示を切り替えられます。</p>
+  <ul>
+    <li><b>画地が丸ごと画面に入っているとき</b> … その画地の<b>真ん中</b>に出ます。</li>
+    <li><b>拡大して画地がはみ出しているとき</b> … 真ん中は画面の外へ出てしまうので、<b>画面に見えている画地線の、長さの真ん中</b>に置きます。これで拡大しても「いまどの画地を見ているか」が分かります。</li>
+    <li>名前どうしが重なるときは、その画地<b>自身の線に沿ってずらして</b>置きます。それでも場所が無いときは出しません。</li>
+    <li><b>取り込んだファイルごとに出す／出さないを切り替えられます。</b>「確認」タブの［レイヤ］→<b>「地番名」</b>の節に、画地の入っているファイルが並びます（線そのものは消えません）。</li>
+    <li>色と大きさは「計測」タブの<b>［線の表示］</b>で変えられます。</li>
   </ul>
   <h3>距離を見る</h3>
   <p><b>距離は独立したレイヤ</b>です。「確認」タブの［レイヤ］→<b>「距離」</b>で表示／非表示を切り替えられます。</p>
