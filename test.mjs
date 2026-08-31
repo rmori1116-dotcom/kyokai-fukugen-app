@@ -56,7 +56,7 @@ await page.waitForTimeout(300);
 
 /* ---------- 1. 起動 ---------- */
 ok('起動時にエラーが出ない', errors.length === 0, errors.slice(0, 3));
-eq('版数', await page.evaluate(() => APP_VERSION), 'v0.8');
+eq('版数', await page.evaluate(() => APP_VERSION), 'v0.9');
 eq('アプリ名', await page.evaluate(() => APP_NAME), '境界復元');
 eq('専用IndexedDB名', await page.evaluate(() => DB_NAME), 'kyokaiFukugenMap');
 eq('専用localStorage名', await page.evaluate(() => LS_KEY), 'kyokaiFukugenMapData_v1');
@@ -855,52 +855,56 @@ const plotLbl = await page2.evaluate(bytes => {
   out.lines = store.lines.length;
   out.layerOn = store.layers.plotName !== false;
 
-  // 1) 全体表示 … 4画地すべてに、その画地の真ん中（頂点の平均）へ出る
+  const idx = ptIndex();
+  /* テスト側で作り直す判定。アプリとは別に書いて突き合わせる。
+     screenEdges … その画地の線を画面座標で全部集める
+     inside      … 右へ引いた半直線が線と何回交わるかで、内側かどうかを見る（偶奇） */
+  const screenEdges = l => {
+    const ids = l.ptIds, n = ids.length, segs = l.closed ? n : n - 1, E = [];
+    for (let i = 0; i < segs; i++) {
+      const a = idx.get(ids[i]), b = idx.get(ids[(i + 1) % n]);
+      if (!a || !b) continue;
+      E.push([toScr(a.x, a.y), toScr(b.x, b.y)]);
+    }
+    return E;
+  };
+  const inside = (E, x, y) => {
+    let c = 0;
+    for (const [A, B] of E) {
+      if ((A[1] <= y) === (B[1] <= y)) continue;
+      if (x < A[0] + (B[0] - A[0]) * (y - A[1]) / (B[1] - A[1])) c++;
+    }
+    return (c & 1) === 1;
+  };
+  const distToLine = (E, x, y) => {
+    let best = 1e9;
+    for (const [A, B] of E) {
+      const dx = B[0] - A[0], dy = B[1] - A[1], l2 = dx * dx + dy * dy;
+      let t = l2 ? ((x - A[0]) * dx + (y - A[1]) * dy) / l2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      best = Math.min(best, Math.hypot(x - (A[0] + t * dx), y - (A[1] + t * dy)));
+    }
+    return best;
+  };
+  const lineOf = t => store.lines.find(x => (String(x.name).trim() || ('画地' + x.no)) === t);
+
+  // 1) 全体表示 … 4画地すべてに、その画地の「囲まれた中」へ出る
   fitToBox(store.points.map(p => p.x), store.points.map(p => p.y));
   const wide = run();
   out.wideN = wide.length;
   out.wideNames = wide.map(g => g.text).sort();
   out.wideOnScreen = wide.every(g => g.cx >= 0 && g.cx <= W && g.cy >= 0 && g.cy <= H);
-  // 期待する真ん中を、テスト側で頂点から作り直して突き合わせる
-  const idx = ptIndex();
-  const want = {};
-  for (const l of store.lines) {
-    const ids = l.ptIds, n = ids.length, segs = l.closed ? n : n - 1;
-    let sx = 0, sy = 0, k = 0;
-    for (let i = 0; i < segs; i++) {
-      const a = idx.get(ids[i]), b = idx.get(ids[(i + 1) % n]);
-      if (!a || !b) continue;
-      const A = toScr(a.x, a.y);
-      sx += A[0]; sy += A[1]; k++;
-    }
-    want[l.name] = [sx / k, sy / k];
-  }
-  const offs = wide.map(g => {
-    const wv = want[g.text];
-    return wv ? Math.hypot(g.cx - wv[0], g.cy - wv[1]) : 999;
-  });
-  out.wideAtCentre = offs.filter(d => d < 12).length;
-  /* 真ん中がふさがって線の上へ逃げたものは、その画地自身の線に乗っていること */
-  out.wideOffCentreOnLine = wide.every(g => {
-    const wv = want[g.text];
-    if (wv && Math.hypot(g.cx - wv[0], g.cy - wv[1]) < 12) return true;
-    const l = store.lines.find(x => (String(x.name).trim() || ('画地' + x.no)) === g.text);
-    if (!l) return false;
-    const ids = l.ptIds, n = ids.length, segs = l.closed ? n : n - 1;
-    let best = 1e9;
-    for (let i = 0; i < segs; i++) {
-      const a = idx.get(ids[i]), b = idx.get(ids[(i + 1) % n]);
-      if (!a || !b) continue;
-      const A = toScr(a.x, a.y), B = toScr(b.x, b.y);
-      const dx = B[0] - A[0], dy = B[1] - A[1], l2 = dx * dx + dy * dy;
-      let t = l2 ? ((g.cx - A[0]) * dx + (g.cy - A[1]) * dy) / l2 : 0;
-      t = Math.max(0, Math.min(1, t));
-      best = Math.min(best, Math.hypot(g.cx - (A[0] + t * dx), g.cy - (A[1] + t * dy)));
-    }
-    return best < 12;
+  out.wideInside = wide.filter(g => {
+    const l = lineOf(g.text);
+    return l && inside(screenEdges(l), g.cx, g.cy);
+  }).length;
+  /* 線のちょうど上ではなく、線から離れた中にあること */
+  out.wideOffLine = wide.every(g => {
+    const l = lineOf(g.text);
+    return l && distToLine(screenEdges(l), g.cx, g.cy) > 1;
   });
 
-  // 2) 拡大 … 真ん中は画面の外でも、見えている線の真ん中に出る
+  // 2) 拡大 … 画地の真ん中は画面の外でも、見えている内側に出る
   const target = store.lines.find(l => l.name === '加津佐西部圃場整備');
   fitToLine(target.id);
   state.view.scale *= 9;
@@ -909,43 +913,19 @@ const plotLbl = await page2.evaluate(bytes => {
   const mine = near.find(g => g.text === target.name);
   out.nearHas = !!mine;
   out.nearOnScreen = !!mine && mine.cx >= 0 && mine.cx <= W && mine.cy >= 0 && mine.cy <= H;
-  // 真ん中（頂点の平均）は画面の外に出ているはず
   {
-    const ids = target.ptIds, n = ids.length, segs = target.closed ? n : n - 1;
+    const E = screenEdges(target);
     let sx = 0, sy = 0, k = 0, allIn = true;
-    const vis = [];
-    for (let i = 0; i < segs; i++) {
-      const a = idx.get(ids[i]), b = idx.get(ids[(i + 1) % n]);
-      if (!a || !b) continue;
-      const A = toScr(a.x, a.y), B = toScr(b.x, b.y);
+    for (const [A, B] of E) {
       sx += A[0]; sy += A[1]; k++;
       if (A[0] < 0 || A[0] > W || A[1] < 0 || A[1] > H) allIn = false;
-      const c = clipSeg(A, B);
-      if (c) {
-        const len = Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]);
-        if (len > 0) vis.push({ a: c[0], b: c[1], len });
-      }
+      if (B[0] < 0 || B[0] > W || B[1] < 0 || B[1] > H) allIn = false;
     }
+    out.allIn = allIn;
     const ctr = [sx / k, sy / k];
     out.centreOffScreen = !(ctr[0] >= 0 && ctr[0] <= W && ctr[1] >= 0 && ctr[1] <= H);
-    out.allIn = allIn;
-    // 見えている線に沿って、ラベルが何割の位置にあるか
-    let total = 0;
-    for (const v of vis) total += v.len;
-    out.visTotal = total;
-    let best = 1e9, acc = 0, at = 0, onLine = 1e9;
-    for (const v of vis) {
-      const dx = v.b[0] - v.a[0], dy = v.b[1] - v.a[1];
-      const l2 = dx * dx + dy * dy;
-      let t = l2 ? ((mine.cx - v.a[0]) * dx + (mine.cy - v.a[1]) * dy) / l2 : 0;
-      t = Math.max(0, Math.min(1, t));
-      const d = Math.hypot(mine.cx - (v.a[0] + t * dx), mine.cy - (v.a[1] + t * dy));
-      if (d < best) { best = d; at = acc + t * v.len; }
-      onLine = Math.min(onLine, d);
-      acc += v.len;
-    }
-    out.distToLine = onLine;
-    out.ratio = total ? at / total : -1;
+    out.nearInside = !!mine && inside(E, mine.cx, mine.cy);
+    out.nearDistToLine = mine ? distToLine(E, mine.cx, mine.cy) : -1;
   }
 
   // 3) レイヤを消すと出ない
@@ -971,14 +951,14 @@ eq('画地名レイヤは既定で表示', plotLbl.layerOn, true);
 eq('全体表示で4画地すべてに出る', plotLbl.wideN, 4);
 eq('出る名前はD00の区画名', plotLbl.wideNames.join(','), '加津佐津波見圃場整備,加津佐西部圃場整備,野田第４,野田第５');
 eq('全体表示のラベルは画面の中', plotLbl.wideOnScreen, true);
-ok('全体表示では画地の真ん中に置く', plotLbl.wideAtCentre >= 3, plotLbl.wideAtCentre);
-ok('真ん中がふさがった分はその画地の線の上へ逃がす', plotLbl.wideOffCentreOnLine, plotLbl.wideOffCentreOnLine);
+eq('全体表示では画地線で囲まれた中に置く', plotLbl.wideInside, 4);
+ok('全体表示のラベルは線の上に乗っていない', plotLbl.wideOffLine, plotLbl.wideOffLine);
 eq('拡大しても画地名が出る', plotLbl.nearHas, true);
 eq('拡大時のラベルも画面の中', plotLbl.nearOnScreen, true);
 eq('拡大時は画地の一部しか見えていない', plotLbl.allIn, false);
 eq('拡大時は真ん中が画面の外', plotLbl.centreOffScreen, true);
-ok('拡大時のラベルは画地線の上にある', plotLbl.distToLine < 12, plotLbl.distToLine);
-ok('拡大時は見えている線の真ん中', Math.abs(plotLbl.ratio - 0.5) < 0.02, plotLbl.ratio);
+eq('拡大時も画地線で囲まれた中に置く', plotLbl.nearInside, true);
+ok('拡大時のラベルは線の上に乗っていない', plotLbl.nearDistToLine > 1, plotLbl.nearDistToLine);
 eq('レイヤを消すと出ない', plotLbl.offN, 0);
 eq('戻すとまた出る', plotLbl.backN, 4);
 ok('名前が空なら画地番号で出す', plotLbl.blank.some(t => /^画地\d+$/.test(t)), plotLbl.blank);

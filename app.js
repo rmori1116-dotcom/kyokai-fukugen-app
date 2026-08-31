@@ -2,7 +2,7 @@
 /* 版の表示はここ1か所から。ヘッダー・使い方・保存状態・PWA名すべてこれを使う */
 const APP_NAME    = '境界復元';
 const APP_EDITION = '地図版';
-const APP_VERSION = 'v0.8';
+const APP_VERSION = 'v0.9';
 const APP_BUILD   = '@@BUILD@@';          // ビルド時に日付と版ハッシュが入る
 function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
 function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
@@ -749,27 +749,24 @@ function draw(){
   ctx.setLineDash([]);
   const distJobs=[], plotJobs=[];
   const namesOn = isPlotNameOn();
+  const plotPx = labelFont('plotNameSize');
   for(const l of store.lines){
     if(!isLineVisible(l)) continue;
     const ids=l.ptIds, n=ids.length;
     if(n<2) continue;
     const segs = l.closed ? n : n-1;
     /* 画地名（地番）を置く場所を決めるための材料。
-       全部が画面に入っていれば頂点の平均＝画地の真ん中に置き、
-       はみ出していれば「画面に見えている線」の長さの真ん中に置く。 */
-    let allIn=true, sumX=0, sumY=0, nV=0;
-    const vis=[];
+       edges … 画地線をぜんぶ（画面の外の分も）ためておく。
+               これが「囲まれた中」を割り出すもとになる。
+       vis   … 画面に見えている線。中が取れなかったときの逃げ場。 */
+    const edges=[], vis=[];
     const showPlotName = namesOn && isPlotNameVisible(l);
     ctx.beginPath();
     for(let i=0;i<segs;i++){
       const a=idx.get(ids[i]), b=idx.get(ids[(i+1)%n]);
       if(!a||!b) continue;
       const A=toScr(a.x,a.y), B=toScr(b.x,b.y);
-      if(showPlotName){
-        sumX+=A[0]; sumY+=A[1]; nV++;
-        if(!onScreen(A)) allIn=false;
-        if(i===segs-1 && !onScreen(B)) allIn=false;
-      }
+      if(showPlotName) edges.push(A[0],A[1],B[0],B[1]);
       if(!segOnScreen(A,B)) continue;
       ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]);
       if(showPlotName){
@@ -789,15 +786,17 @@ function draw(){
     }
     ctx.stroke();
     if(showPlotName){
-      const cands = plotLabelAnchors(vis, allIn, sumX, sumY, nV);
-      if(cands.length) plotJobs.push([cands, plotLabelText(l)]);
+      const text=plotLabelText(l);
+      ctx.font='bold '+plotPx+'px sans-serif';
+      const cands = plotLabelAnchors(edges, vis, plotPx, ctx.measureText(text).width);
+      if(cands.length) plotJobs.push([cands, text]);
     }
   }
   /* 画地名は数が少なく、いまどの画地を見ているかの手がかりになるので、
      場所の取り合いでは点名や距離より先に確保する（描くのは最後＝いちばん手前）。 */
   const plotDraw=[];
   if(namesOn && plotJobs.length){
-    const px=labelFont('plotNameSize');
+    const px=plotPx;
     ctx.font='bold '+px+'px sans-serif';
     for(const [cands, text] of plotJobs){
       const w=ctx.measureText(text).width, h=px+4;
@@ -906,11 +905,16 @@ function draw(){
 }
 /* ================= 画地名（地番）の置き場所 =================
    D00の区画名（地番が入っていればそれ）を、画地ごとに1つだけ出す。
-   ・画地が丸ごと画面に入っているとき … 頂点の平均＝画地の真ん中
-   ・はみ出しているとき（拡大時）     … 画面に見えている画地線の、長さの真ん中
-   真ん中のままだと拡大したときに画面の外へ出てしまい、
-   「いまどの画地を見ているのか」が分からなくなるため。 */
+   置くのは線の上ではなく、**画地線で囲まれた中（内側）**。
+   ・画地が丸ごと画面に入っているとき … その画地の内側の真ん中
+   ・はみ出しているとき（拡大時）     … 画面に見えている**内側**の真ん中
+   内側の探し方は「横に引いた線が画地線と何回交わるか」で決める（偶奇判定）。
+   横向きの文字を置くので、横にいちばん広く空いているところを選ぶ。
+   囲まれた中が取れない画地（線が閉じていない・一筆書きで往復しているなど）
+   だけは、これまでどおり見えている線の上へ逃がす。 */
 const PLOT_LABEL_MIN_PX = 60;      // 見えている線がこれより短ければ出さない
+const PLOT_LABEL_SCANS  = 21;      // 内側を探すときに横へ引く線の本数
+const PLOT_LABEL_MIN_W  = 22;      // 内側がこれより狭ければ置かない（画面px）
 function plotLabelText(l){
   const s=String(l.name==null?'':l.name).trim();
   return s || `画地${l.no}`;
@@ -930,14 +934,60 @@ function clipSeg(A,B){
   }
   return [[A[0]+t0*dx, A[1]+t0*dy], [A[0]+t1*dx, A[1]+t1*dy]];
 }
+/* 画地の内側で、横にいちばん広く空いているところを探す。
+   横線を PLOT_LABEL_SCANS 本引き、画地線との交点を左から並べて
+   「1本目と2本目のあいだ」「3本目と4本目のあいだ」…を内側とみなす（偶奇判定）。
+   その区間を画面の中へ切り詰めるので、拡大しても地番は画面の中に残る。 */
+function plotInsideAnchors(edges, px, textW){
+  const out=[];
+  if(edges.length<12) return out;                 // 3辺に満たなければ囲めない
+  let y0=Infinity, y1=-Infinity;
+  for(let i=1;i<edges.length;i+=2){
+    const y=edges[i];
+    if(y<y0) y0=y;
+    if(y>y1) y1=y;
+  }
+  const h=px+10, pad=4;
+  y0=Math.max(y0, pad+h/2); y1=Math.min(y1, H-pad-h/2);
+  if(!(y1>y0)) return out;
+  const need=Math.max(PLOT_LABEL_MIN_W, textW+12);
+  const midY=(y0+y1)/2, half=(y1-y0)/2 || 1;
+  const hits=[], xs=[];
+  for(let s=0;s<PLOT_LABEL_SCANS;s++){
+    const y = y0 + (y1-y0)*(s+0.5)/PLOT_LABEL_SCANS;
+    xs.length=0;
+    for(let i=0;i<edges.length;i+=4){
+      const ay=edges[i+1], by=edges[i+3];
+      if((ay<=y)===(by<=y)) continue;             // またいでいない辺は関係ない
+      xs.push(edges[i] + (edges[i+2]-edges[i])*(y-ay)/(by-ay));
+    }
+    if(xs.length<2) continue;
+    xs.sort((a,b)=>a-b);
+    for(let k=0;k+1<xs.length;k+=2){
+      const a=Math.max(xs[k], pad), b=Math.min(xs[k+1], W-pad);
+      const w=b-a;
+      if(w<PLOT_LABEL_MIN_W) continue;
+      const fit=Math.min(1, w/need);              // 文字が収まるか（1なら十分）
+      const near=1-0.5*Math.abs(y-midY)/half;     // 上下の真ん中に近いほうがよい
+      hits.push({ x:(a+b)/2, y, sc:fit*fit*near });
+    }
+  }
+  if(!hits.length) return out;
+  hits.sort((p,q)=>q.sc-p.sc);
+  for(const p of hits){
+    if(out.length>=6) break;
+    if(out.some(o=>Math.abs(o[0]-p.x)<24 && Math.abs(o[1]-p.y)<24)) continue;
+    out.push([p.x,p.y]);
+  }
+  return out;
+}
 /* 置きたい順に候補を返す。前のものが他のラベルとぶつかったら次を使う。
-   1つ目 … 画地の真ん中（丸ごと画面に入っているときだけ）
-   2つ目 … 画面に見えている画地線の、長さの真ん中 */
+   1〜 … 画地線で囲まれた中（広いところから順に）
+   最後 … 中が取れなかったときだけ、見えている画地線の上 */
 /* 線の上をずらす順番。真ん中から始めて、ふさがっていたら前後へ逃げる */
 const PLOT_LABEL_SLIDE = [0.5, 0.25, 0.75, 0.375, 0.625, 0.125, 0.875];
-function plotLabelAnchors(vis, allIn, sumX, sumY, nV){
-  const out=[];
-  if(allIn && nV) out.push([sumX/nV, sumY/nV]);
+function plotLabelAnchors(edges, vis, px, textW){
+  const out=plotInsideAnchors(edges, px, textW||0);
   let total=0;
   for(const s of vis) total+=s.len;
   if(total >= PLOT_LABEL_MIN_PX){
