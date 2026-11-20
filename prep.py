@@ -25,6 +25,8 @@ app = (here / 'app.js').read_text(encoding='utf-8')
 if '<!--@APP-->' not in text:
     sys.exit('placeholder not found: <!--@APP-->')
 text = text.replace('<!--@APP-->', app)
+# 地番図（法務省 地図XML）の機能（jiban.js）を差し込む
+text = text.replace('<!--@JIBAN-->', (here / 'jiban.js').read_text(encoding='utf-8'))
 
 used = []
 def sub(m):

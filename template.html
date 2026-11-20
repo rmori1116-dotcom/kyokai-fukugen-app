@@ -654,7 +654,7 @@
 /* 版の表示はここ1か所から。ヘッダー・使い方・保存状態・PWA名すべてこれを使う */
 const APP_NAME    = '境界復元';
 const APP_EDITION = '地図版';
-const APP_VERSION = 'v0.10';
+const APP_VERSION = 'v0.11';
 const APP_BUILD   = '@@BUILD@@';          // ビルド時に日付と版ハッシュが入る
 function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
 function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
@@ -1708,6 +1708,7 @@ function draw(){
     ctx.restore();
     scheduleDetail();
   }
+  if(typeof drawJiban==='function') drawJiban();
   if(store.layers.memo!==false) for(const s of store.strokes){
     ctx.strokeStyle=s.color; ctx.lineWidth=Math.max(1,s.w*state.view.scale);
     ctx.lineCap='round'; ctx.lineJoin='round';
@@ -1866,6 +1867,7 @@ function draw(){
   for(const [A,B,t] of distJobs) drawDistLabel(A,B,t,distPx);
   /* --- 画地名（地番）--- */
   for(const [cx,cy,text,px,col] of plotDraw) drawPlotName(cx,cy,text,px,col);
+  if(typeof drawJibanLabels==='function') drawJibanLabels();
   if(state.gps.ok){
     const [x,y]=toScr(state.gps.x,state.gps.y);
     const [ax,ay]=accToMapUnitsXY(state.gps.acc);
@@ -1928,6 +1930,8 @@ function plotInsideAnchors(edges, px, textW){
   y0=Math.max(y0, pad+h/2); y1=Math.min(y1, H-pad-h/2);
   if(!(y1>y0)) return out;
   const need=Math.max(PLOT_LABEL_MIN_W, textW+12);
+  /* 全体表示で小さく見える画地でも、文字の中心だけは画地内へ置けるようにする。 */
+  const minInsideW=Math.min(PLOT_LABEL_MIN_W,Math.max(4,px/3));
   const midY=(y0+y1)/2, half=(y1-y0)/2 || 1;
   const hits=[], xs=[];
   for(let s=0;s<PLOT_LABEL_SCANS;s++){
@@ -1943,10 +1947,18 @@ function plotInsideAnchors(edges, px, textW){
     for(let k=0;k+1<xs.length;k+=2){
       const a=Math.max(xs[k], pad), b=Math.min(xs[k+1], W-pad);
       const w=b-a;
-      if(w<PLOT_LABEL_MIN_W) continue;
+      if(w<minInsideW) continue;
+      /* 中央を優先しつつ、画地内を横切る補助線などが中央にある場合は
+         少し左右へずらし、ラベルの中心を境界線そのものへ置かない。 */
+      let cx=null, centreBias=1;
+      for(const f of [0.5,0.42,0.58,0.34,0.66,0.25,0.75]){
+        const x=a+w*f;
+        if(plotEdgeDistance(edges,x,y)>2){ cx=x; centreBias=1-Math.abs(f-0.5)*0.35; break; }
+      }
+      if(cx==null) continue;
       const fit=Math.min(1, w/need);              // 文字が収まるか（1なら十分）
       const near=1-0.5*Math.abs(y-midY)/half;     // 上下の真ん中に近いほうがよい
-      hits.push({ x:(a+b)/2, y, sc:fit*fit*near });
+      hits.push({ x:cx, y, sc:fit*fit*near*centreBias });
     }
   }
   if(!hits.length) return out;
@@ -1958,6 +1970,17 @@ function plotInsideAnchors(edges, px, textW){
   }
   return out;
 }
+function plotEdgeDistance(edges, x, y){
+  let best=Infinity;
+  for(let i=0;i<edges.length;i+=4){
+    const ax=edges[i], ay=edges[i+1], bx=edges[i+2], by=edges[i+3];
+    const dx=bx-ax, dy=by-ay, d2=dx*dx+dy*dy;
+    let t=d2 ? ((x-ax)*dx+(y-ay)*dy)/d2 : 0;
+    t=Math.max(0,Math.min(1,t));
+    best=Math.min(best,Math.hypot(x-(ax+t*dx),y-(ay+t*dy)));
+  }
+  return best;
+}
 /* 置きたい順に候補を返す。前のものが他のラベルとぶつかったら次を使う。
    1〜 … 画地線で囲まれた中（広いところから順に）
    最後 … 中が取れなかったときだけ、見えている画地線の上 */
@@ -1967,7 +1990,8 @@ function plotLabelAnchors(edges, vis, px, textW){
   const out=plotInsideAnchors(edges, px, textW||0);
   let total=0;
   for(const s of vis) total+=s.len;
-  if(total >= PLOT_LABEL_MIN_PX){
+  /* 内側の候補がある画地では、ラベル同士が近くても境界線上へは逃がさない。 */
+  if(!out.length && total >= PLOT_LABEL_MIN_PX){
     for(const f of PLOT_LABEL_SLIDE){
       const at = lineFractionPoint(vis, total, f);
       if(at) out.push(at);
@@ -2454,6 +2478,7 @@ canvas.addEventListener('wheel', e=>{
 },{passive:false});
 
 function onTap(sx,sy){
+  if(typeof jibanTap==='function' && jibanTap(sx,sy)) return;
   if(state.mode==='rec'){
     const p=nearestPoint(sx,sy,TOUCH_HIT_RADIUS,false);
     if(p){ openRec(p.id); return; }
@@ -3593,6 +3618,7 @@ function openLayers(){
     }
     return row;
   }).join('');
+  if(typeof jibanLayerHtml==='function') document.getElementById('otherLayers').insertAdjacentHTML('beforeend', jibanLayerHtml());
   const c=progCounts();
   const sts=[['stDa','打設',c.da,disp('stDaColor'),'stDaColor'],
              ['stKi','既設',c.ki,disp('stKiColor'),'stKiColor'],
@@ -3651,7 +3677,7 @@ function toggleLayer(k){
 }
 function layerName(k){
   return {pt:'境界点',line:'画地の線',plotName:'画地名（地番）',route:'計測線',dist:'距離',ref:'基準点',
-          memo:'手書きメモ',base:'図面',map:'背景地図',
+          memo:'手書きメモ',base:'図面',map:'背景地図',jiban:'地番図',
           stDa:'打設',stKi:'既設',stNone:'未'}[k]||k;
 }
 /* 取込ファイルごとの色。線と地番名だけに効く（境界点は記録の状態の色のまま） */
@@ -4838,6 +4864,709 @@ setTimeout(()=>{
     },1500);
   }
 })();
+
+/* ================= 地番図（法務省 登記所備付地図・地図XML） =================
+   法務省がG空間情報センターで無償公開している「地図XML」（市区町村ごとのzip、または個別のXML）を
+   端末に取り込んで、地番と筆界を重ねて表示する。通信は要らない。取り込んだデータは端末内（IndexedDB）に残るので、圏外でも使える。
+
+   ・座標系が「公共座標n系」のもの（地籍調査済みなどの地図）… そのまま地図に重ねる。
+   ・座標系が「任意座標系」のもの（地籍調査が済んでいない地区の公図）… 実際の位置を持たないので、
+     いったん画面の中央へ仮置きし、［位置合わせ］で2点を合わせて位置・向き・縮尺を決める。
+     公図は精度が低いので、合わせたあとも参考表示。境界の確定や登記の用には使えない。
+
+   取り込みは app.js 本体に触れず、この塊だけで完結する（app.js には呼び出し口が数行あるだけ）。 */
+const JIBAN_KEY = 'jiban:index';
+const JIBAN_DATA = 'jiban:d:';
+const JIBAN_MAX_VERTS = 2500000;     // 1回の取り込みで受け入れる頂点数の上限（端末の保存容量を守る）
+const JIBAN_DRAW_MAX  = 6000;        // 画面内の筆がこれを超えたら線は描かない（拡大を促す）
+const JIBAN_LABEL_MAX = 400;         // 地番を出す筆数の上限
+const JIBAN_LABEL_MIN_W = 30;        // 筆が画面でこれより狭ければ地番を出さない（px）
+const JIBAN_FREE_COLOR = '#e8590c';  // 任意座標系（公図）の色
+const JIBAN_CREDIT = '地番図：法務省 登記所備付地図データ（G空間情報センター）　参考表示';
+const J = { loaded:false, items:[], data:{}, alpha:0.85, color:'#c2255c', labels:true,
+            sel:null, place:null, busy:false, dense:false };
+
+/* ---------- 座標のやりとり ---------- */
+function jibanToPlane(x,y){      // 地図の座標 → 平面直角（東,北）
+  if(state.geographic){ try{ return currentProj().forward([x,y]); }catch(e){} }
+  return [x,y];
+}
+function jibanFromPlane(E,N){    // 平面直角（東,北）→ 地図の座標
+  if(state.geographic){ try{ return currentProj().inverse([E,N]); }catch(e){} }
+  return [E,N];
+}
+
+/* ---------- 地図XMLの読み取り ---------- */
+function jibanKid(el,name){
+  for(let c=el.firstElementChild;c;c=c.nextElementSibling) if(c.localName===name) return c;
+  return null;
+}
+function jibanText(el,name){ const k=el&&jibanKid(el,name); return k?k.textContent.trim():''; }
+function jibanDP(dp){            // DirectPosition → [東(Y),北(X)]。XMLは X=北, Y=東
+  const X=parseFloat(jibanText(dp,'X')), Y=parseFloat(jibanText(dp,'Y'));
+  return (isFinite(X)&&isFinite(Y)) ? [Y,X] : null;
+}
+function jibanDist2(a,b){ const dx=a[0]-b[0], dy=a[1]-b[1]; return dx*dx+dy*dy; }
+function jibanChain(ids, curveOf){
+  const cs=[];
+  for(const id of ids){ const c=curveOf(id); if(c&&c.length) cs.push(c); }
+  if(!cs.length) return [];
+  /* 先頭の線が逆向きなら直す（次の線とつながる端を探す） */
+  if(cs.length>1){
+    const a=cs[0], b=cs[1];
+    const e=a[a.length-1], s=a[0];
+    const dEnd=Math.min(jibanDist2(e,b[0]), jibanDist2(e,b[b.length-1]));
+    const dStart=Math.min(jibanDist2(s,b[0]), jibanDist2(s,b[b.length-1]));
+    if(dStart<dEnd) cs[0]=a.slice().reverse();
+  }
+  const out=[];
+  for(let k=0;k<cs.length;k++){
+    let c=cs[k];
+    if(out.length){
+      const last=out[out.length-1];
+      if(jibanDist2(last,c[c.length-1]) < jibanDist2(last,c[0])) c=c.slice().reverse();
+      for(let i=(jibanDist2(last,c[0])<1e-6?1:0); i<c.length; i++) out.push(c[i]);
+    }else{
+      for(let i=0;i<c.length;i++) out.push(c[i]);
+    }
+  }
+  return out;
+}
+/* 1つの地図XML（文字列）を読む。返り値 { head, parcels, verts }
+   parcels の各要素: { t:地番, o:大字, a:丁目, k:小字, y:予備, q:精度区分, s:座標値種別, r:[フラット座標の配列…（先頭が外周）] }
+   座標は x=東, y=北（XMLのY, X）。 */
+function jibanParseXml(text){
+  const doc=new DOMParser().parseFromString(text,'application/xml');
+  if(doc.getElementsByTagName('parsererror').length) throw new Error('XMLとして読めません');
+  const root=doc.documentElement;
+  if(!root || root.localName!=='地図') throw new Error('地図XMLではありません');
+  const head={ name:jibanText(root,'地図名'), cityCode:jibanText(root,'市区町村コード'),
+               city:jibanText(root,'市区町村名'), crs:jibanText(root,'座標系'), datum:jibanText(root,'測地系判別') };
+  const NS='*';
+  const pts=new Map();
+  for(const p of doc.getElementsByTagNameNS(NS,'GM_Point')){
+    const dp=p.getElementsByTagNameNS(NS,'DirectPosition')[0];
+    const xy=dp&&jibanDP(dp); if(xy&&p.getAttribute('id')) pts.set(p.getAttribute('id'),xy);
+  }
+  const curves=new Map(), orient=new Map();
+  for(const c of doc.getElementsByTagNameNS(NS,'GM_Curve')){
+    const id=c.getAttribute('id'); if(!id) continue;
+    const seq=[];
+    for(const col of c.getElementsByTagNameNS(NS,'GM_PointArray.column')){
+      const ref=col.getElementsByTagNameNS(NS,'GM_PointRef.point')[0];
+      if(ref){ const q=pts.get(ref.getAttribute('idref')); if(q) seq.push(q); continue; }
+      const dp=col.getElementsByTagNameNS(NS,'DirectPosition')[0];
+      const q=dp&&jibanDP(dp); if(q) seq.push(q);
+    }
+    curves.set(id,seq);
+  }
+  for(const o of doc.getElementsByTagNameNS(NS,'GM_OrientableCurve')){
+    const id=o.getAttribute('id'); if(!id) continue;
+    const prim=jibanKid(o,'GM_OrientablePrimitive.primitive');
+    const ori=jibanText(o,'GM_OrientablePrimitive.orientation');
+    orient.set(id,{ prim:prim?prim.getAttribute('idref'):'', neg:ori==='-' });
+  }
+  const curveOf=id=>{
+    const o=orient.get(id);
+    if(o){ const base=curves.get(o.prim); return base&&o.neg ? base.slice().reverse() : base; }
+    return curves.get(id);
+  };
+  const round3=v=>Math.round(v*1000)/1000;
+  const flat=ring=>{ const f=[]; for(const q of ring){ f.push(round3(q[0]),round3(q[1])); } return f; };
+  const ringsOf=wrap=>{
+    const ids=[]; for(const g of wrap.getElementsByTagNameNS(NS,'GM_CompositeCurve.generator')) ids.push(g.getAttribute('idref'));
+    return flat(jibanChain(ids,curveOf));
+  };
+  const surfaces=new Map();
+  for(const s of doc.getElementsByTagNameNS(NS,'GM_Surface')){
+    const id=s.getAttribute('id'); if(!id) continue;
+    const rings=[];
+    const ex=s.getElementsByTagNameNS(NS,'GM_SurfaceBoundary.exterior')[0];
+    if(ex){ const r=ringsOf(ex); if(r.length>=6) rings.push(r); }
+    if(!rings.length) continue;
+    for(const inn of s.getElementsByTagNameNS(NS,'GM_SurfaceBoundary.interior')){
+      const r=ringsOf(inn); if(r.length>=6) rings.push(r);
+    }
+    surfaces.set(id,rings);
+  }
+  const parcels=[]; let verts=0;
+  for(const f of doc.getElementsByTagNameNS(NS,'筆')){
+    const sh=jibanKid(f,'形状'); if(!sh) continue;
+    const rings=surfaces.get(sh.getAttribute('idref')); if(!rings) continue;
+    for(const r of rings) verts+=r.length/2;
+    parcels.push({ t:jibanText(f,'地番'), o:jibanText(f,'大字名'), a:jibanText(f,'丁目名'),
+                   k:jibanText(f,'小字名'), y:jibanText(f,'予備名'),
+                   q:jibanText(f,'精度区分'), s:jibanText(f,'座標値種別'), r:rings });
+  }
+  return { head, parcels, verts };
+}
+
+/* ---------- zipの展開（外部ライブラリなし。ブラウザ標準の展開機能を使う） ---------- */
+async function jibanInflate(data){
+  if(typeof DecompressionStream==='undefined')
+    throw new Error('このブラウザはzipの展開に未対応です。zipを展開してXMLを選んでください');
+  const stream=new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+function jibanUnzip(buf){        // → [{ name, get() }]
+  const u8=new Uint8Array(buf), dv=new DataView(buf);
+  let e=-1;
+  for(let i=u8.length-22;i>=Math.max(0,u8.length-70000);i--){ if(dv.getUint32(i,true)===0x06054b50){ e=i; break; } }
+  if(e<0) throw new Error('zipとして読めません');
+  const n=dv.getUint16(e+10,true); let p=dv.getUint32(e+16,true);
+  const out=[];
+  for(let k=0;k<n;k++){
+    if(p+46>u8.length || dv.getUint32(p,true)!==0x02014b50) break;
+    const flag=dv.getUint16(p+8,true), method=dv.getUint16(p+10,true);
+    const csize=dv.getUint32(p+20,true), usize=dv.getUint32(p+24,true);
+    const nl=dv.getUint16(p+28,true), xl=dv.getUint16(p+30,true), cl=dv.getUint16(p+32,true);
+    const lho=dv.getUint32(p+42,true);
+    const nb=u8.subarray(p+46,p+46+nl);
+    let name; try{ name=new TextDecoder((flag&0x800)?'utf-8':'shift_jis').decode(nb); }catch(_){ name=String.fromCharCode(...nb); }
+    p+=46+nl+xl+cl;
+    if(name.endsWith('/')) continue;
+    if(csize===0xFFFFFFFF||usize===0xFFFFFFFF||lho===0xFFFFFFFF) throw new Error('4GBを超えるzipには未対応です');
+    out.push({ name, get:async()=>{
+      const nl2=dv.getUint16(lho+26,true), xl2=dv.getUint16(lho+28,true);
+      const st=lho+30+nl2+xl2, data=u8.subarray(st,st+csize);
+      if(method===0) return data;
+      if(method===8) return jibanInflate(data);
+      throw new Error('未対応の圧縮方式です');
+    }});
+  }
+  return out;
+}
+async function jibanCollect(files){
+  const items=[];
+  const addZip=async(buf,label)=>{
+    for(const en of jibanUnzip(buf)){
+      const low=en.name.toLowerCase();
+      if(low.endsWith('.xml')) items.push({ name:en.name, get:en.get });
+      else if(low.endsWith('.zip')){ const inner=await en.get(); await addZip(inner.buffer.slice(inner.byteOffset,inner.byteOffset+inner.byteLength),en.name); }
+    }
+  };
+  for(const f of files){
+    const low=f.name.toLowerCase();
+    if(low.endsWith('.xml')) items.push({ name:f.name, get:async()=>new Uint8Array(await f.arrayBuffer()) });
+    else if(low.endsWith('.zip')) await addZip(await f.arrayBuffer(), f.name);
+  }
+  return items;
+}
+
+/* ---------- 取り込み ---------- */
+function jibanId(){ return 'j'+newId(); }
+async function jibanSaveIndex(){
+  const meta=J.items.map(d=>({ id:d.id, name:d.name, city:d.city, kind:d.kind, zone:d.zone, n:d.n, verts:d.verts,
+                               tf:d.tf, placed:d.placed, hidden:d.hidden, ts:d.ts, crs:d.crs }));
+  await idbPut(DB_STORE, JSON.stringify({ v:1, items:meta, alpha:J.alpha, color:J.color, labels:J.labels }), JIBAN_KEY);
+}
+function jibanBBox(parcels){
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  for(const p of parcels){ const r=p.r[0]; for(let i=0;i<r.length;i+=2){
+    if(r[i]<x0)x0=r[i]; if(r[i]>x1)x1=r[i]; if(r[i+1]<y0)y0=r[i+1]; if(r[i+1]>y1)y1=r[i+1]; } }
+  return [x0,y0,x1,y1];
+}
+async function jibanImportFiles(fileList){
+  if(J.busy){ toast('取り込み中です'); return; }
+  const files=Array.from(fileList||[]); if(!files.length) return;
+  J.busy=true;
+  let job=null;
+  try{
+    showProgress('地図XMLを確認しています…');
+    const items=await jibanCollect(files);
+    if(!items.length){ hideProgress(); toast('地図XML（.xml / .zip）が見つかりません'); return; }
+    job=startJob('地図XMLを読み込み中…', items.length);
+    const pub=new Map(), free=[]; const errs=[]; let verts=0, over=false, nOk=0;
+    for(let i=0;i<items.length;i++){
+      if(job.cancel) break;
+      updateJob(i, `地図XMLを読み込み中（${i+1}/${items.length}）${items[i].name.split('/').pop()}`);
+      await new Promise(r=>setTimeout(r,0));
+      let r;
+      try{
+        const bytes=await items[i].get();
+        r=jibanParseXml(new TextDecoder('utf-8').decode(bytes));
+      }catch(e){ errs.push(items[i].name.split('/').pop()+'：'+(e.message||e)); continue; }
+      if(!r.parcels.length) continue;
+      const m=/^公共座標(\d{1,2})系$/.exec(r.head.crs);
+      if(m && +m[1]>=1 && +m[1]<=19){
+        const z=+m[1];
+        let g=pub.get(z); if(!g){ g={ zone:z, city:r.head.city, parcels:[], verts:0 }; pub.set(z,g); }
+        for(const p of r.parcels) g.parcels.push(p);
+        g.verts+=r.verts;
+      }else if(r.head.crs==='任意座標系'){
+        free.push({ city:r.head.city, name:r.head.name, parcels:r.parcels, verts:r.verts });
+      }else{ errs.push(items[i].name.split('/').pop()+'：座標系「'+r.head.crs+'」は未対応です'); continue; }
+      nOk++; verts+=r.verts;
+      if(verts>JIBAN_MAX_VERTS){ over=true; break; }
+    }
+    const made=[];
+    const put=async(meta,parcels)=>{
+      const old=J.items.findIndex(d=>d.name===meta.name && d.kind===meta.kind);
+      if(old>=0){ const o=J.items[old]; if(meta.kind==='free'&&o.placed){ meta.tf=o.tf; meta.placed=true; } await jibanDrop(o.id,true); }
+      meta.id=jibanId(); meta.ts=Date.now(); meta.hidden=false;
+      await idbPut(DB_STORE, JSON.stringify(parcels), JIBAN_DATA+meta.id);
+      J.data[meta.id]=parcels; J.items.push(meta); made.push(meta);
+    };
+    for(const g of pub.values())
+      await put({ name:`${g.city||'地図'}（公共座標${g.zone}系）`, city:g.city, kind:'pub', zone:g.zone, n:g.parcels.length,
+                  verts:g.verts, tf:null, placed:true, crs:`公共座標${g.zone}系` }, g.parcels);
+    const ctr=jibanToPlane(state.view.cx,state.view.cy);
+    for(const f of free){
+      const bb=jibanBBox(f.parcels);
+      await put({ name:`${f.city||''} ${f.name||'公図'}`.trim(), city:f.city, kind:'free', zone:0, n:f.parcels.length,
+                  verts:f.verts, tf:{ a:1, b:0, tx:ctr[0]-(bb[0]+bb[2])/2, ty:ctr[1]-(bb[1]+bb[3])/2 },
+                  placed:false, crs:'任意座標系' }, f.parcels);
+    }
+    await jibanSaveIndex();
+    store.layers.jiban=true; save();
+    const cancelled=job.cancel;
+    endJob(); job=null; hideProgress();
+    const nPub=made.filter(d=>d.kind==='pub').length, nFree=made.filter(d=>d.kind==='free').length;
+    if(made.length){
+      const first=made.find(d=>d.kind==='pub')||made[0];
+      jibanFit(first.id);
+    }
+    const msg=`${nOk}ファイルを取り込みました（公共座標 ${nPub}件／任意座標 ${nFree}件）`
+      +(nFree?'。任意座標系は仮置きです。［位置合わせ］で2点を合わせてください':'');
+    const warn=[]; if(over) warn.push('上限（頂点250万）に達したため、残りは取り込んでいません。範囲を分けて取り込んでください');
+    if(cancelled) warn.push('中止しました');
+    if(errs.length) warn.push(`読めなかったファイル ${errs.length}件：${errs.slice(0,2).join(' / ')}`);
+    if(warn.length) { showAlert(esc(msg)+'<br>'+warn.map(esc).join('<br>'),[{label:'閉じる',fn:'hideAlert()'}]); document.getElementById('alertBar').style.background='#c9741a'; }
+    else toast(msg);
+    if(panelOpen('layerPanel')) openLayers();
+  }catch(e){
+    if(job) endJob();
+    hideProgress();
+    showAlert('地図XMLを取り込めませんでした：'+esc(e.message||e),[{label:'閉じる',fn:'hideAlert()'}]);
+  }finally{ J.busy=false; }
+}
+function jibanPick(){
+  const inp=document.createElement('input');
+  inp.type='file'; inp.multiple=true;
+  inp.accept='.xml,.zip,application/xml,text/xml,application/zip';
+  inp.style.display='none';
+  inp.onchange=()=>{ const fs=Array.from(inp.files||[]); inp.remove(); jibanImportFiles(fs); };
+  document.body.appendChild(inp);
+  inp.click();
+}
+async function jibanDrop(id, keepIndex){
+  const i=J.items.findIndex(d=>d.id===id); if(i<0) return;
+  J.items.splice(i,1); delete J.data[id];
+  if(J.sel && J.sel.id===id) J.sel=null;
+  try{ await idbReq(DB_STORE,'readwrite',s=>s.delete(JIBAN_DATA+id)); }catch(e){}
+  if(!keepIndex) await jibanSaveIndex();
+}
+async function jibanDel(id){
+  const d=J.items.find(x=>x.id===id); if(!d) return;
+  if(!confirm(`「${d.name}」を削除します。取り込み直せば元に戻せます。`)) return;
+  await jibanDrop(id); draw();
+  if(panelOpen('layerPanel')) openLayers();
+}
+async function jibanInit(){
+  try{
+    const raw=await idbGet(DB_STORE, JIBAN_KEY);
+    if(raw){
+      const ix=JSON.parse(raw);
+      J.alpha=+ix.alpha>0?+ix.alpha:J.alpha; if(isColorHex(ix.color)) J.color=ix.color;
+      J.labels=ix.labels!==false;
+      for(const m of ix.items||[]){
+        const s=await idbGet(DB_STORE, JIBAN_DATA+m.id);
+        if(!s) continue;
+        J.data[m.id]=JSON.parse(s); J.items.push(m);
+      }
+    }
+  }catch(e){}
+  J.loaded=true; draw();
+}
+
+/* ---------- 画面用の座標（現在の座標系・位置合わせに合わせて作り直す） ---------- */
+function jibanCache(ds){
+  const parcels=J.data[ds.id]; if(!parcels) return null;
+  const cz=currentZone();
+  const key=`${cz}|${state.geographic?1:0}|${ds.kind==='free'?JSON.stringify(ds.tf):ds.zone}`;
+  if(ds._c && ds._c.key===key) return ds._c;
+  let pa=null, pb=null;
+  if(ds.kind==='pub' && ds.zone!==cz){ pa=proj4(zoneProj(ds.zone)); pb=proj4(zoneProj(cz)); }
+  const geo=state.geographic ? currentProj() : null;
+  const tf=ds.kind==='free'?ds.tf:null;
+  const conv=(e,n)=>{
+    if(tf){ const E=tf.a*e-tf.b*n+tf.tx, N=tf.b*e+tf.a*n+tf.ty; e=E; n=N; }
+    else if(pa){ try{ const ll=pa.inverse([e,n]); const q=pb.forward(ll); e=q[0]; n=q[1]; }catch(_){} }
+    if(geo){ try{ const ll=geo.inverse([e,n]); return ll; }catch(_){} }
+    return [e,n];
+  };
+  const bb=new Float64Array(parcels.length*4), rs=new Array(parcels.length);
+  for(let i=0;i<parcels.length;i++){
+    const rings=parcels[i].r, out=new Array(rings.length);
+    let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+    for(let k=0;k<rings.length;k++){
+      const r=rings[k], f=new Float64Array(r.length);
+      for(let j=0;j<r.length;j+=2){
+        const q=conv(r[j],r[j+1]); f[j]=q[0]; f[j+1]=q[1];
+        if(k===0){ if(q[0]<x0)x0=q[0]; if(q[0]>x1)x1=q[0]; if(q[1]<y0)y0=q[1]; if(q[1]>y1)y1=q[1]; }
+      }
+      out[k]=f;
+    }
+    rs[i]=out; bb[4*i]=x0; bb[4*i+1]=y0; bb[4*i+2]=x1; bb[4*i+3]=y1;
+  }
+  ds._c={ key, bb, rs, lp:new Array(parcels.length) };
+  return ds._c;
+}
+function jibanPip(r,x,y){        // 点が輪の中か（偶奇）
+  let ins=false;
+  for(let i=0,j=r.length-2;i<r.length;j=i,i+=2){
+    const xi=r[i], yi=r[i+1], xj=r[j], yj=r[j+1];
+    if((yi>y)!==(yj>y) && x<(xj-xi)*(y-yi)/(yj-yi)+xi) ins=!ins;
+  }
+  return ins;
+}
+function jibanInside(rings,x,y){
+  if(!jibanPip(rings[0],x,y)) return false;
+  for(let k=1;k<rings.length;k++) if(jibanPip(rings[k],x,y)) return false;
+  return true;
+}
+function jibanLabelPoint(c,i){   // 地番を置く場所（筆の内側）
+  if(c.lp[i]!==undefined) return c.lp[i];
+  const rings=c.rs[i], r=rings[0], n=r.length/2;
+  const ox=r[0], oy=r[1];
+  let a=0,cx=0,cy=0;
+  for(let p=0,q=n-1;p<n;q=p++){
+    const xi=r[2*p]-ox, yi=r[2*p+1]-oy, xj=r[2*q]-ox, yj=r[2*q+1]-oy;
+    const f=xj*yi-xi*yj; a+=f; cx+=(xj+xi)*f; cy+=(yj+yi)*f;
+  }
+  let pt=null;
+  if(a!==0){ const X=cx/(3*a)+ox, Y=cy/(3*a)+oy; if(jibanInside(rings,X,Y)) pt=[X,Y]; }
+  if(!pt){   // 重心が外のとき：中ほどの高さで、内側がいちばん長いところの真ん中
+    const y0=c.bb[4*i+1], y1=c.bb[4*i+3];
+    let best=null, bl=-1;
+    for(const t of [0.5,0.35,0.65,0.2,0.8]){
+      const Y=y0+(y1-y0)*t, xs=[];
+      for(let p=0,q=r.length-2;p<r.length;q=p,p+=2){
+        const yi=r[p+1], yj=r[q+1];
+        if((yi>Y)!==(yj>Y)) xs.push(r[p]+(Y-yi)*(r[q]-r[p])/(yj-yi));
+      }
+      xs.sort((u,v)=>u-v);
+      for(let k=0;k+1<xs.length;k+=2){ const len=xs[k+1]-xs[k]; if(len>bl){ bl=len; best=[(xs[k]+xs[k+1])/2,Y]; } }
+    }
+    pt=best;
+  }
+  return (c.lp[i]=pt);
+}
+
+/* ---------- 描画 ---------- */
+function jibanSets(){
+  if(store.layers.jiban===false) return [];
+  return J.items.filter(d=>!d.hidden && J.data[d.id]);
+}
+function jibanView(){
+  const a=toMap(0,0), b=toMap(W,H);
+  return [Math.min(a[0],b[0]), Math.min(a[1],b[1]), Math.max(a[0],b[0]), Math.max(a[1],b[1])];
+}
+function jibanVisible(c,v){
+  const out=[]; const bb=c.bb;
+  for(let i=0;i<bb.length;i+=4){
+    if(bb[i+2]<v[0]||bb[i]>v[2]||bb[i+3]<v[1]||bb[i+1]>v[3]) continue;
+    out.push(i/4);
+  }
+  return out;
+}
+function jibanRgba(hex,a){
+  const n=parseInt(hex.slice(1),16);
+  return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;
+}
+function drawJiban(){
+  J.dense=false;
+  const sets=jibanSets(); if(!sets.length) return;
+  const v=jibanView(), jobs=[]; let total=0;
+  for(const ds of sets){
+    const c=jibanCache(ds); if(!c) continue;
+    const vis=jibanVisible(c,v); total+=vis.length; jobs.push([ds,c,vis]);
+  }
+  if(total>JIBAN_DRAW_MAX){ J.dense=true; return; }
+  const s=state.view.scale, cx=state.view.cx, cy=state.view.cy;
+  ctx.save();
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  for(const [ds,c,vis] of jobs){
+    if(!vis.length) continue;
+    const col = ds.kind==='free' ? JIBAN_FREE_COLOR : J.color;
+    ctx.beginPath();
+    for(const i of vis) for(const r of c.rs[i]){
+      for(let j=0;j<r.length;j+=2){
+        const X=(r[j]-cx)*s+W/2, Y=(cy-r[j+1])*s+H/2;
+        j?ctx.lineTo(X,Y):ctx.moveTo(X,Y);
+      }
+      ctx.closePath();
+    }
+    ctx.globalAlpha=J.alpha*0.10; ctx.fillStyle=col; ctx.fill('evenodd');
+    ctx.globalAlpha=J.alpha; ctx.strokeStyle=col; ctx.lineWidth=1.3;
+    ctx.setLineDash(ds.kind==='free'&&!ds.placed ? [6,4] : []);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawJibanLabels(){
+  const sets=jibanSets();
+  const v=jibanView(), s=state.view.scale, cx=state.view.cx, cy=state.view.cy;
+  let drewAny=false;
+  if(sets.length){
+    const px=12;
+    ctx.save();
+    ctx.font='bold '+px+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.lineJoin='round';
+    let nLab=0;
+    for(const ds of sets){
+      const c=jibanCache(ds); if(!c) continue;
+      const vis=jibanVisible(c,v);
+      if(vis.length) drewAny=true;
+      if(!J.labels || J.dense) continue;
+      const parcels=J.data[ds.id];
+      const col = ds.kind==='free' ? JIBAN_FREE_COLOR : J.color;
+      for(const i of vis){
+        if(nLab>=JIBAN_LABEL_MAX) break;
+        const t=parcels[i].t; if(!t) continue;
+        const wpx=(c.bb[4*i+2]-c.bb[4*i])*s, hpx=(c.bb[4*i+3]-c.bb[4*i+1])*s;
+        const tw=ctx.measureText(t).width;
+        if(wpx<Math.max(JIBAN_LABEL_MIN_W,tw*0.8) || hpx<px) continue;
+        const lp=jibanLabelPoint(c,i); if(!lp) continue;
+        const X=(lp[0]-cx)*s+W/2, Y=(cy-lp[1])*s+H/2;
+        if(X<0||X>W||Y<0||Y>H) continue;
+        if(!placeLabel(X,Y,tw+6,px+4)) continue;
+        ctx.lineWidth=3; ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.strokeText(t,X,Y);
+        ctx.fillStyle=col; ctx.fillText(t,X,Y);
+        nLab++;
+      }
+    }
+    ctx.restore();
+    /* 選んだ筆を太く */
+    if(J.sel){
+      const ds=J.items.find(d=>d.id===J.sel.id), c=ds&&jibanCache(ds);
+      if(c && c.rs[J.sel.i]){
+        ctx.save(); ctx.strokeStyle='#1e73d2'; ctx.fillStyle='rgba(30,115,210,.18)'; ctx.lineWidth=3; ctx.lineJoin='round';
+        ctx.beginPath();
+        for(const r of c.rs[J.sel.i]){
+          for(let j=0;j<r.length;j+=2){ const X=(r[j]-cx)*s+W/2, Y=(cy-r[j+1])*s+H/2; j?ctx.lineTo(X,Y):ctx.moveTo(X,Y); }
+          ctx.closePath();
+        }
+        ctx.fill('evenodd'); ctx.stroke(); ctx.restore();
+      }
+    }
+    if(J.dense){
+      ctx.save(); ctx.font='bold 14px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      const msg='地番図は拡大すると表示します', w=ctx.measureText(msg).width+16;
+      ctx.fillStyle='rgba(30,58,95,.85)'; ctx.fillRect(W/2-w/2,H*0.12,w,26);
+      ctx.fillStyle='#fff'; ctx.fillText(msg,W/2,H*0.12+13); ctx.restore();
+    }
+    if(drewAny||J.dense){
+      const r=creditBox();
+      ctx.save(); ctx.font='11px system-ui, sans-serif';
+      const w=ctx.measureText(JIBAN_CREDIT).width+8;
+      ctx.fillStyle='rgba(255,255,255,.82)'; ctx.fillRect(4,r.y-r.h-2,w,r.h);
+      ctx.fillStyle='#333'; ctx.textAlign='left'; ctx.textBaseline='middle';
+      ctx.fillText(JIBAN_CREDIT,8,r.y-r.h/2-2); ctx.restore();
+    }
+  }
+  /* 位置合わせ中の目印 */
+  const pl=J.place;
+  if(pl){
+    ctx.save(); ctx.lineWidth=3;
+    const mark=(mx,my,col,txt)=>{
+      const [X,Y]=toScr(mx,my);
+      ctx.strokeStyle=col; ctx.fillStyle=col;
+      ctx.beginPath(); ctx.arc(X,Y,13,0,7); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(X-18,Y); ctx.lineTo(X+18,Y); ctx.moveTo(X,Y-18); ctx.lineTo(X,Y+18); ctx.stroke();
+      ctx.font='bold 14px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='bottom';
+      ctx.lineWidth=4; ctx.strokeStyle='rgba(255,255,255,.9)'; ctx.strokeText(txt,X+16,Y-14); ctx.fillText(txt,X+16,Y-14);
+      ctx.lineWidth=3;
+    };
+    pl.pairs.forEach((p,k)=>mark(p.dstMap[0],p.dstMap[1],'#1a8f3c',`合わせた点${k+1}`));
+    if(pl.src) mark(pl.src.map[0],pl.src.map[1],JIBAN_FREE_COLOR,`図上の点${pl.pairs.length+1}`);
+    ctx.restore();
+  }
+}
+
+/* ---------- タップ（属性の表示／位置合わせ） ---------- */
+function jibanHit(sx,sy){
+  const [mx,my]=toMap(sx,sy);
+  for(const ds of jibanSets()){
+    const c=jibanCache(ds); if(!c) continue;
+    for(let i=0;i<c.rs.length;i++){
+      const o=4*i;
+      if(mx<c.bb[o]||mx>c.bb[o+2]||my<c.bb[o+1]||my>c.bb[o+3]) continue;
+      if(jibanInside(c.rs[i],mx,my)) return { ds, i };
+    }
+  }
+  return null;
+}
+function jibanClearSel(){ J.sel=null; hideAlert(); draw(); }
+function jibanTap(sx,sy){
+  if(J.place) return jibanPlaceTap(sx,sy);
+  if(state.mode!=='view') return false;
+  if(!jibanSets().length) return false;
+  const h=jibanHit(sx,sy);
+  if(!h){ if(J.sel){ J.sel=null; hideAlert(); draw(); } return false; }
+  const p=J.data[h.ds.id][h.i];
+  J.sel={ id:h.ds.id, i:h.i }; draw();
+  const area=[p.o,p.a,p.k,p.y].filter(Boolean).join(' ');
+  const free=h.ds.kind==='free';
+  showAlert(`<b>地番 ${esc(p.t||'（なし）')}</b>　${esc(area)}<br>`
+    +`精度区分 ${esc(p.q||'—')}　座標値種別 ${esc(p.s||'—')}　${esc(h.ds.crs)}<br>`
+    +(free?(h.ds.placed?'公図（任意座標系）を2点で位置合わせした表示です。位置は目安です。':'公図（任意座標系）です。位置は仮置きで、実際の位置ではありません。')
+           :'法務省 登記所備付地図データ。参考表示で、境界の確定・登記の証明には使えません。'),
+    [{label:'閉じる',fn:'jibanClearSel()'}]);
+  document.getElementById('alertBar').style.background='#1e3a5f';
+  return true;
+}
+
+/* ---------- 公図（任意座標系）の位置合わせ ---------- */
+function jibanBar(){
+  let el=document.getElementById('jibanBar');
+  const pl=J.place;
+  if(!pl){ if(el) el.remove(); return; }
+  if(!el){
+    el=document.createElement('div'); el.id='jibanBar';
+    el.style.cssText='position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 56px);z-index:60;'
+      +'background:#e8590c;color:#fff;border-radius:10px;padding:10px 12px;font-size:15px;line-height:1.4;'
+      +'display:flex;gap:10px;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.3);';
+    document.body.appendChild(el);
+  }
+  const n=pl.pairs.length+1;
+  const msg = pl.src
+    ? `位置合わせ ${n}/2：その点の<b>実際の位置</b>をタップ（境界点・基準点は近くなら吸着します）`
+    : `位置合わせ ${n}/2：<b>公図上の点（筆の角）</b>をタップ`;
+  el.innerHTML=`<span style="flex:1">${msg}</span>`
+    +`<button type="button" onclick="jibanPlaceCancel()" style="min-width:64px;min-height:44px;border:none;border-radius:8px;background:#fff;color:#c2410c;font-size:15px;font-weight:bold;">取消</button>`;
+}
+function jibanPlaceStart(id){
+  const ds=J.items.find(d=>d.id===id); if(!ds||ds.kind!=='free') return;
+  closePanel('layerPanel'); hideAlert();
+  ds.hidden=false; store.layers.jiban=true;
+  J.sel=null;
+  J.place={ id, pairs:[], src:null, backup:{ tf:Object.assign({},ds.tf), placed:ds.placed } };
+  jibanFit(id); jibanBar();
+  toast('公図の2点を、実際の位置に合わせます');
+}
+function jibanPlaceCancel(){
+  const pl=J.place; if(!pl) return;
+  const ds=J.items.find(d=>d.id===pl.id);
+  if(ds){ ds.tf=pl.backup.tf; ds.placed=pl.backup.placed; }
+  J.place=null; jibanBar(); draw(); toast('位置合わせを取り消しました');
+}
+function jibanNearestVertex(ds,sx,sy,thr){
+  const c=jibanCache(ds); if(!c) return null;
+  const v=jibanView(), parcels=J.data[ds.id], s=state.view.scale;
+  let best=null, bd=thr;
+  for(const i of jibanVisible(c,v)){
+    const rings=c.rs[i];
+    for(let k=0;k<rings.length;k++){
+      const r=rings[k];
+      for(let j=0;j<r.length;j+=2){
+        const X=(r[j]-state.view.cx)*s+W/2, Y=(state.view.cy-r[j+1])*s+H/2;
+        const d=Math.hypot(X-sx,Y-sy);
+        if(d<bd){ bd=d; best={ map:[r[j],r[j+1]], local:[parcels[i].r[k][j],parcels[i].r[k][j+1]] }; }
+      }
+    }
+  }
+  return best;
+}
+function jibanPlaceTap(sx,sy){
+  const pl=J.place, ds=J.items.find(d=>d.id===pl.id);
+  if(!ds){ J.place=null; jibanBar(); return false; }
+  if(!pl.src){
+    const v=jibanNearestVertex(ds,sx,sy,TOUCH_HIT_RADIUS);
+    if(!v){ toast('公図の筆の角が近くにありません。角の近くをタップしてください'); return true; }
+    pl.src=v; jibanBar(); draw(); return true;
+  }
+  let dst, snapped=false;
+  const p=nearestPoint(sx,sy,TOUCH_HIT_RADIUS,true);
+  if(p){ dst=[p.x,p.y]; snapped=true; } else dst=toMap(sx,sy);
+  const E=jibanToPlane(dst[0],dst[1]);
+  pl.pairs.push({ src:pl.src.local, dst:E, dstMap:dst });
+  pl.src=null;
+  const tf=ds.tf;
+  if(pl.pairs.length===1){
+    /* 1点目：まず平行移動だけで合わせて、2点目を取りやすくする */
+    const q=pl.pairs[0];
+    tf.tx=q.dst[0]-(tf.a*q.src[0]-tf.b*q.src[1]);
+    tf.ty=q.dst[1]-(tf.b*q.src[0]+tf.a*q.src[1]);
+    toast(snapped?'1点目を点に合わせました。次は2点目':'1点目を合わせました。次は2点目');
+    jibanBar(); draw(); return true;
+  }
+  const [q1,q2]=pl.pairs;
+  const sx_=q2.src[0]-q1.src[0], sy_=q2.src[1]-q1.src[1];
+  const dx_=q2.dst[0]-q1.dst[0], dy_=q2.dst[1]-q1.dst[1];
+  const sl=sx_*sx_+sy_*sy_, dl=dx_*dx_+dy_*dy_;
+  if(sl<1e-6 || dl<1e-6){
+    pl.pairs.pop(); jibanBar(); draw();
+    toast('2点が近すぎます。離れた別の点を選んでください'); return true;
+  }
+  const a=(dx_*sx_+dy_*sy_)/sl, b=(dy_*sx_-dx_*sy_)/sl;
+  tf.a=a; tf.b=b;
+  tf.tx=q1.dst[0]-(a*q1.src[0]-b*q1.src[1]);
+  tf.ty=q1.dst[1]-(b*q1.src[0]+a*q1.src[1]);
+  ds.placed=true;
+  const scale=Math.hypot(a,b), rot=Math.atan2(b,a)*180/Math.PI;
+  J.place=null; jibanBar();
+  jibanSaveIndex().catch(()=>{});
+  draw();
+  toast(`位置合わせをしました（縮尺 ×${scale.toFixed(3)}、回転 ${rot.toFixed(2)}°）。公図の精度のため位置は目安です`);
+  if(panelOpen('layerPanel')) openLayers();
+  return true;
+}
+
+/* ---------- レイヤ画面 ---------- */
+function jibanFit(id){
+  const ds=J.items.find(d=>d.id===id), c=ds&&jibanCache(ds); if(!c||!c.rs.length) return;
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  for(let i=0;i<c.bb.length;i+=4){
+    if(c.bb[i]<x0)x0=c.bb[i]; if(c.bb[i+2]>x1)x1=c.bb[i+2];
+    if(c.bb[i+1]<y0)y0=c.bb[i+1]; if(c.bb[i+3]>y1)y1=c.bb[i+3];
+  }
+  if(!isFinite(x0)) return;
+  closePanel('layerPanel');
+  fitToBox([x0,x1],[y0,y1]);
+  /* 市区町村全体のように広い範囲だと筆が多すぎて描かれないので、画面に筆が収まる程度まで寄せる */
+  let guard=0;
+  while(guard++<8){
+    const vis=jibanVisible(c,jibanView()).length;
+    if(vis<=JIBAN_DRAW_MAX*0.8) break;
+    state.view.scale=clampScale(state.view.scale*1.6);
+  }
+  draw();
+}
+function jibanToggleDs(id){
+  const d=J.items.find(x=>x.id===id); if(!d) return;
+  d.hidden=!d.hidden; jibanSaveIndex().catch(()=>{}); draw(); openLayers();
+}
+function jibanSetAlpha(v){ J.alpha=Math.min(1,Math.max(0.1,+v/100)); jibanSaveIndex().catch(()=>{}); draw(); }
+function jibanSetColor(v){ if(!isColorHex(v)) return; J.color=v; jibanSaveIndex().catch(()=>{}); draw(); }
+function jibanToggleLabels(){ J.labels=!J.labels; jibanSaveIndex().catch(()=>{}); draw(); openLayers(); }
+function jibanLayerHtml(){
+  const on=store.layers.jiban!==false;
+  const alpha=Math.round(J.alpha*100);
+  const tog=(f,flag)=>`<button type="button" class="del" style="background:${flag?'#e7f0fb':'#f0f0f0'};color:${flag?'#1e73d2':'#999'};min-width:52px;" onclick="${f}">${flag?'表示':'非表示'}</button>`;
+  let h=`<div class="listRow">${tog("toggleLayer('jiban')",on)}
+    <input type="color" class="layerCol" value="${esc(J.color)}" title="地番図の色" aria-label="地番図の色" onchange="jibanSetColor(this.value)">
+    <span style="flex:1">地番図（法務省 地図XML）</span><span class="coords">${J.items.length?J.items.length+'件':'未読込'}</span></div>
+  <div class="listRow" style="padding-top:0;"><span style="min-width:52px;"></span>
+    <span style="flex:1;font-size:13px;color:#666c74;">透過率 <span id="jibanAlphaVal" style="color:#1e3a5f;font-weight:bold;">${alpha}%</span></span>
+    <input id="jibanAlpha" type="range" min="10" max="100" step="5" value="${alpha}" style="flex:1.6;"
+      oninput="document.getElementById('jibanAlphaVal').textContent=this.value+'%'" onchange="jibanSetAlpha(this.value)"></div>
+  <div class="listRow" style="padding-top:0;">
+    <button type="button" class="del" style="background:${J.labels?'#e7f0fb':'#f0f0f0'};color:${J.labels?'#1e73d2':'#999'};min-width:52px;" onclick="jibanToggleLabels()">${J.labels?'地番あり':'地番なし'}</button>
+    <button type="button" class="del" style="flex:1;background:#e7f0fb;color:#1e3a5f;" onclick="jibanPick()">地図XML（.xml／.zip）を取り込む</button></div>`;
+  for(const d of J.items){
+    const free=d.kind==='free';
+    h+=`<div class="listRow">${tog(`jibanToggleDs('${d.id}')`,!d.hidden)}
+      <span class="stChip ${free?'no':'da'}" style="${free?`background:${JIBAN_FREE_COLOR};`:`background:${J.color};`}">${free?(d.placed?'公図(合致)':'公図(仮置)'):'公共'}</span>
+      <span style="flex:1">${esc(d.name)}</span><span class="coords">${d.n}筆</span>
+      <button type="button" class="del" onclick="jibanFit('${d.id}')" title="表示範囲へ移動">⤢</button>
+      ${free?`<button type="button" class="del" style="background:#fff1e6;color:#c2410c;" onclick="jibanPlaceStart('${d.id}')">位置合わせ</button>`:''}
+      <button type="button" class="del" onclick="jibanDel('${d.id}')">削除</button></div>`;
+  }
+  if(!J.items.length) h+='<p style="color:#888;font-size:14px;">G空間情報センターの「登記所備付地図データ」（市区町村ごとのzip）をそのまま選べます。地籍調査が済んでいない地区（任意座標系）は、取り込み後に［位置合わせ］で2点を合わせます。</p>';
+  return h;
+}
+jibanInit();
 
 </script>
 </body>

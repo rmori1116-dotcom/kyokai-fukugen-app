@@ -56,7 +56,7 @@ await page.waitForTimeout(300);
 
 /* ---------- 1. 起動 ---------- */
 ok('起動時にエラーが出ない', errors.length === 0, errors.slice(0, 3));
-eq('版数', await page.evaluate(() => APP_VERSION), 'v0.10');
+eq('版数', await page.evaluate(() => APP_VERSION), 'v0.11');
 eq('アプリ名', await page.evaluate(() => APP_NAME), '境界復元');
 eq('専用IndexedDB名', await page.evaluate(() => DB_NAME), 'kyokaiFukugenMap');
 eq('専用localStorage名', await page.evaluate(() => LS_KEY), 'kyokaiFukugenMapData_v1');
@@ -1166,7 +1166,7 @@ eq('色は現場の保存に入る', layerColor.inSite, '#ff0000');
 eq('色を戻せる', layerColor.afterClear, null);
 eq('戻すと既定の色で引かれる', layerColor.backToDef, true);
 ok('レイヤ画面に色のボタンが並ぶ', layerColor.colInputs >= 9, layerColor.colInputs);
-eq('種類ごとの色は5つ（線・地番名・計測線・距離・基準点）', layerColor.otherCols, 5);
+eq('種類ごとの色は6つ（線・地番名・計測線・距離・基準点・地番図）', layerColor.otherCols, 6);
 eq('状態の色は3つ（打設・既設・未）', layerColor.stateCols, 3);
 eq('画地を持つファイルにだけ色を出す', layerColor.impCols, 2);
 eq('地番名の節では色を変えさせない（決めるのはファイルの節）', layerColor.nameCols, 0);

@@ -2,7 +2,7 @@
 /* 版の表示はここ1か所から。ヘッダー・使い方・保存状態・PWA名すべてこれを使う */
 const APP_NAME    = '境界復元';
 const APP_EDITION = '地図版';
-const APP_VERSION = 'v0.10';
+const APP_VERSION = 'v0.11';
 const APP_BUILD   = '@@BUILD@@';          // ビルド時に日付と版ハッシュが入る
 function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
 function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
@@ -744,6 +744,7 @@ function draw(){
     ctx.restore();
     scheduleDetail();
   }
+  if(typeof drawJiban==='function') drawJiban();
   if(store.layers.memo!==false) for(const s of store.strokes){
     ctx.strokeStyle=s.color; ctx.lineWidth=Math.max(1,s.w*state.view.scale);
     ctx.lineCap='round'; ctx.lineJoin='round';
@@ -902,6 +903,7 @@ function draw(){
   for(const [A,B,t] of distJobs) drawDistLabel(A,B,t,distPx);
   /* --- 画地名（地番）--- */
   for(const [cx,cy,text,px,col] of plotDraw) drawPlotName(cx,cy,text,px,col);
+  if(typeof drawJibanLabels==='function') drawJibanLabels();
   if(state.gps.ok){
     const [x,y]=toScr(state.gps.x,state.gps.y);
     const [ax,ay]=accToMapUnitsXY(state.gps.acc);
@@ -964,6 +966,8 @@ function plotInsideAnchors(edges, px, textW){
   y0=Math.max(y0, pad+h/2); y1=Math.min(y1, H-pad-h/2);
   if(!(y1>y0)) return out;
   const need=Math.max(PLOT_LABEL_MIN_W, textW+12);
+  /* 全体表示で小さく見える画地でも、文字の中心だけは画地内へ置けるようにする。 */
+  const minInsideW=Math.min(PLOT_LABEL_MIN_W,Math.max(4,px/3));
   const midY=(y0+y1)/2, half=(y1-y0)/2 || 1;
   const hits=[], xs=[];
   for(let s=0;s<PLOT_LABEL_SCANS;s++){
@@ -979,10 +983,18 @@ function plotInsideAnchors(edges, px, textW){
     for(let k=0;k+1<xs.length;k+=2){
       const a=Math.max(xs[k], pad), b=Math.min(xs[k+1], W-pad);
       const w=b-a;
-      if(w<PLOT_LABEL_MIN_W) continue;
+      if(w<minInsideW) continue;
+      /* 中央を優先しつつ、画地内を横切る補助線などが中央にある場合は
+         少し左右へずらし、ラベルの中心を境界線そのものへ置かない。 */
+      let cx=null, centreBias=1;
+      for(const f of [0.5,0.42,0.58,0.34,0.66,0.25,0.75]){
+        const x=a+w*f;
+        if(plotEdgeDistance(edges,x,y)>2){ cx=x; centreBias=1-Math.abs(f-0.5)*0.35; break; }
+      }
+      if(cx==null) continue;
       const fit=Math.min(1, w/need);              // 文字が収まるか（1なら十分）
       const near=1-0.5*Math.abs(y-midY)/half;     // 上下の真ん中に近いほうがよい
-      hits.push({ x:(a+b)/2, y, sc:fit*fit*near });
+      hits.push({ x:cx, y, sc:fit*fit*near*centreBias });
     }
   }
   if(!hits.length) return out;
@@ -994,6 +1006,17 @@ function plotInsideAnchors(edges, px, textW){
   }
   return out;
 }
+function plotEdgeDistance(edges, x, y){
+  let best=Infinity;
+  for(let i=0;i<edges.length;i+=4){
+    const ax=edges[i], ay=edges[i+1], bx=edges[i+2], by=edges[i+3];
+    const dx=bx-ax, dy=by-ay, d2=dx*dx+dy*dy;
+    let t=d2 ? ((x-ax)*dx+(y-ay)*dy)/d2 : 0;
+    t=Math.max(0,Math.min(1,t));
+    best=Math.min(best,Math.hypot(x-(ax+t*dx),y-(ay+t*dy)));
+  }
+  return best;
+}
 /* 置きたい順に候補を返す。前のものが他のラベルとぶつかったら次を使う。
    1〜 … 画地線で囲まれた中（広いところから順に）
    最後 … 中が取れなかったときだけ、見えている画地線の上 */
@@ -1003,7 +1026,8 @@ function plotLabelAnchors(edges, vis, px, textW){
   const out=plotInsideAnchors(edges, px, textW||0);
   let total=0;
   for(const s of vis) total+=s.len;
-  if(total >= PLOT_LABEL_MIN_PX){
+  /* 内側の候補がある画地では、ラベル同士が近くても境界線上へは逃がさない。 */
+  if(!out.length && total >= PLOT_LABEL_MIN_PX){
     for(const f of PLOT_LABEL_SLIDE){
       const at = lineFractionPoint(vis, total, f);
       if(at) out.push(at);
@@ -1149,6 +1173,7 @@ function updateProg(){
 /* ================= 操作 ================= */
 <!--@SRC:1831-1899-->
 function onTap(sx,sy){
+  if(typeof jibanTap==='function' && jibanTap(sx,sy)) return;
   if(state.mode==='rec'){
     const p=nearestPoint(sx,sy,TOUCH_HIT_RADIUS,false);
     if(p){ openRec(p.id); return; }
@@ -1723,6 +1748,7 @@ function openLayers(){
     }
     return row;
   }).join('');
+  if(typeof jibanLayerHtml==='function') document.getElementById('otherLayers').insertAdjacentHTML('beforeend', jibanLayerHtml());
   const c=progCounts();
   const sts=[['stDa','打設',c.da,disp('stDaColor'),'stDaColor'],
              ['stKi','既設',c.ki,disp('stKiColor'),'stKiColor'],
@@ -1781,7 +1807,7 @@ function toggleLayer(k){
 }
 function layerName(k){
   return {pt:'境界点',line:'画地の線',plotName:'画地名（地番）',route:'計測線',dist:'距離',ref:'基準点',
-          memo:'手書きメモ',base:'図面',map:'背景地図',
+          memo:'手書きメモ',base:'図面',map:'背景地図',jiban:'地番図',
           stDa:'打設',stKi:'既設',stNone:'未'}[k]||k;
 }
 /* 取込ファイルごとの色。線と地番名だけに効く（境界点は記録の状態の色のまま） */
