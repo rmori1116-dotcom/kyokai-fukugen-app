@@ -130,6 +130,15 @@ eq('任意座標XMLを小字別に整理する', JSON.stringify(ag), JSON.string
 ok('小字別一覧画面がある', await page.evaluate(()=>!!document.getElementById('jibanAreaPanel')));
 await page.evaluate(()=>{ openJibanAreas(); document.getElementById('jibanAreaSearch').value='乙'; jibanRenderAreas('乙'); });
 ok('小字名で検索できる', await page.evaluate(()=>document.getElementById('jibanAreaRows').textContent.includes('小字乙') && !document.getElementById('jibanAreaRows').textContent.includes('小字甲')));
+const viewer=await page.evaluate(async()=>{
+  const g=jibanAreaGroups().find(x=>x.label.includes('小字乙')), id=Array.from(g.sets.keys())[0];
+  jibanViewerOpen(encodeURIComponent(g.key),id); await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  const c=document.getElementById('jibanViewerCanvas');
+  return { show:panelOpen('jibanViewerPanel'), title:document.getElementById('jibanViewerTitle').textContent, count:document.getElementById('jibanViewerCount').textContent, w:c.width, h:c.height };
+});
+ok('公図専用ビューアが開く', viewer.show); ok('ビューアに小字名が出る', viewer.title.includes('小字乙'), viewer.title);
+eq('ビューアに筆数が出る', viewer.count, '1筆'); ok('ビューアのキャンバスを描画できる', viewer.w>100&&viewer.h>100, viewer);
+await page.evaluate(()=>{ closePanel('jibanViewerPanel'); openJibanAreas(); });
 const focused=await page.evaluate(()=>{
   const g=jibanAreaGroups().find(x=>x.label.includes('小字乙')), id=Array.from(g.sets.keys())[0];
   jibanAreaOpen(encodeURIComponent(g.key),id);
@@ -139,6 +148,16 @@ const focused=await page.evaluate(()=>{
 eq('選んだ小字だけに絞る', focused.label, '大字テスト 小字乙');
 eq('選んだXMLだけを表示する', focused.sets, 1); eq('選んだ小字の筆だけを表示する', focused.vis, 1);
 await page.evaluate(()=>jibanAreaClear(false));
+
+const web=await page.evaluate(async()=>{
+  openJibanWeb(); document.getElementById('jibanWebCity').value='長崎市'; document.getElementById('jibanWebToken').value='test-token';
+  const org=window.fetch;
+  window.fetch=async()=>new Response(JSON.stringify({success:true,result:{results:[{name:'nagasaki',title:'長崎市（長崎地方法務局）登記所備付地図データ',owner_org:'moj-42nagasaki',resources:[{name:'42201-2025.zip',url:'https://example.test/2025.zip',size:100},{name:'42201-2026.zip',url:'https://example.test/2026.zip',size:200}]}]}}),{status:200,headers:{'Content-Type':'application/json'}});
+  await jibanWebSearch(); window.fetch=org;
+  return { n:JW.results.length, html:document.getElementById('jibanWebRows').textContent, latest:jibanWebZipResources(JW.results[0])[0].name };
+});
+eq('ウェブで市区町村XMLを検索できる', web.n, 1); ok('検索結果に市区町村名が出る', web.html.includes('長崎市'), web.html); eq('最新版ZIPを選ぶ', web.latest, '42201-2026.zip');
+await page.evaluate(()=>closePanel('jibanWebPanel'));
 
 /* 3. 描画・属性表示（公共座標） */
 await page.evaluate(()=>{ const d=J.items.find(x=>x.kind==='pub'); jibanFit(d.id); });

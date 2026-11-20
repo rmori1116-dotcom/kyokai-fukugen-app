@@ -454,13 +454,48 @@
 <!-- 地籍調査未終了地区の公図を小字別に確認 -->
 <div class="panel" id="jibanAreaPanel"><div class="sheet">
   <h2>小字別 公図一覧<button type="button" class="close" onclick="closePanel('jibanAreaPanel')">✕</button></h2>
-  <div class="noteBox" style="margin-bottom:10px;">取り込んだ法務局の任意座標XMLを、市区町村・大字・小字で自動整理します。任意座標のため実際の位置は持たず、地図に合わせる場合はレイヤ画面の［位置合わせ］を使います。</div>
+  <div class="noteBox" style="margin-bottom:10px;">法務局の任意座標XMLを、市区町村・大字・小字で自動整理します。公図は背景地図や航空写真に重ねず、専用ビューアでそのまま確認できます。</div>
+  <button type="button" class="saveBtn" style="margin:0 0 10px;background:#e8590c;" onclick="openJibanWeb()">ウェブから法務局XMLを取得</button>
   <div class="formRow" style="margin-bottom:6px;">
     <label for="jibanAreaSearch">小字を検索</label>
     <input id="jibanAreaSearch" type="search" placeholder="市区町村・大字・小字" oninput="jibanRenderAreas(this.value)">
   </div>
   <div id="jibanAreaCount" style="font-size:13px;color:#667085;margin:4px 0 8px;"></div>
   <div id="jibanAreaRows"></div>
+</div></div>
+
+<!-- G空間情報センターから法務局XMLを直接取得 -->
+<div class="panel" id="jibanWebPanel"><div class="sheet">
+  <h2>法務局XMLをウェブ取得<button type="button" class="close" onclick="closePanel('jibanWebPanel')">✕</button></h2>
+  <div class="noteBox" style="margin-bottom:10px;">G空間情報センターの公式配布データを検索します。XMLの取得には、同センターの無料アカウントとAPIトークンが必要です。トークンはこの端末の現在の画面内だけで使い、サーバーには保存しません。</div>
+  <div class="formRow"><label for="jibanWebCity">市区町村</label><input id="jibanWebCity" placeholder="例：長崎市" autocomplete="address-level2"></div>
+  <div class="formRow"><label for="jibanWebToken">APIトークン</label><input id="jibanWebToken" type="password" placeholder="G空間情報センターのトークン" autocomplete="off"></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+    <button type="button" class="saveBtn" style="margin:0;flex:1;" onclick="jibanWebSearch()">市区町村を検索</button>
+    <button type="button" class="saveBtn" style="margin:0;flex:1;background:#eef2f6;color:#334155;box-shadow:none;" onclick="jibanWebOpenAccount()">登録・トークン発行</button>
+  </div>
+  <label style="display:flex;gap:10px;align-items:flex-start;min-height:48px;padding:8px 0;font-size:13px;color:#475569;">
+    <input id="jibanWebAgree" type="checkbox" style="width:24px;height:24px;flex:none;">
+    <span>公式配布元の利用規約を確認し、取得するデータの利用条件に同意します。</span>
+  </label>
+  <div id="jibanWebStatus" style="font-size:13px;color:#667085;margin:6px 0;"></div>
+  <div id="jibanWebRows"></div>
+</div></div>
+
+<!-- 任意座標の公図だけを見る専用ビューア -->
+<div class="panel" id="jibanViewerPanel"><div class="sheet" style="width:min(980px,100%);height:min(92vh,860px);display:flex;flex-direction:column;overflow:hidden;">
+  <h2><span id="jibanViewerTitle">公図ビューア</span><button type="button" class="close" onclick="jibanViewerClose()">✕</button></h2>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+    <button type="button" class="del" onclick="jibanViewerFit()">全体表示</button>
+    <button type="button" class="del" onclick="jibanViewerZoom(1.35)">拡大</button>
+    <button type="button" class="del" onclick="jibanViewerZoom(0.74)">縮小</button>
+    <span id="jibanViewerCount" class="coords" style="margin-left:auto;align-self:center;"></span>
+  </div>
+  <div style="position:relative;flex:1;min-height:280px;border:1px solid #cbd5e1;border-radius:14px;overflow:hidden;background:#fff;">
+    <canvas id="jibanViewerCanvas" style="display:block;width:100%;height:100%;touch-action:none;"></canvas>
+    <div style="position:absolute;left:10px;bottom:8px;padding:4px 7px;border-radius:7px;background:rgba(255,255,255,.88);font-size:11px;color:#64748b;pointer-events:none;">指1本で移動・2本指で拡大縮小</div>
+  </div>
+  <div id="jibanViewerInfo" class="noteBox" style="margin-top:8px;min-height:44px;">筆をタップすると地番と属性を表示します。</div>
 </div></div>
 
 <!-- 画面の表示設定 -->
@@ -654,7 +689,8 @@
   <ul>
     <li>初期状態は「非表示」です。使うときだけ「表示」にしてください。<b>初回表示には通信が必要</b>です。</li>
     <li>法務省の登記所備付地図データのうち、地図上へそのまま重ねられる<b>公共座標の区域</b>が対象です。任意座標の区域など、何も出ない場所があります。</li>
-    <li>任意座標の公図は、同じレイヤ画面の<b>［地図XML（.xml／.zip）を取り込む］</b>から読みます。取り込み後の<b>［小字別に公図を見る］</b>で市区町村・大字・小字から探せます。</li>
+    <li>任意座標の公図は、同じレイヤ画面の<b>［ウェブ取得・公図ビューア］</b>から市区町村を検索し、G空間情報センターの公式XMLを取得できます。初回は同センターの無料アカウントとAPIトークンが必要です。</li>
+    <li>取得後は<b>小字別</b>に整理され、背景地図や航空写真を使わない公図専用ビューアで拡大・移動・筆の属性確認ができます。手元のXML／ZIPを取り込む方法も残しています。</li>
     <li>任意座標の公図を地図に重ねる場合は、図面ごとに<b>［位置合わせ］</b>で2点を合わせてください。</li>
     <li>表示は参考です。境界の確定や登記の証明には使えません。</li>
   </ul>

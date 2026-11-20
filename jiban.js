@@ -259,7 +259,7 @@ function jibanRenderAreas(query){
     const files=Array.from(g.sets.entries()).map(([id,n])=>{
       const ds=J.items.find(d=>d.id===id); if(!ds) return '';
       return `<button type="button" class="saveBtn" style="margin:7px 0 0;background:#fff1e6;color:#9a3412;box-shadow:none;border:1px solid #fdba74;text-align:left;"
-        onclick="jibanAreaOpen('${jibanAreaEnc(g.key)}','${id}')"><b>このXMLを見る</b><br><span style="font-size:12px;font-weight:normal;">${esc(ds.name)}　${n}筆</span></button>`;
+        onclick="jibanViewerOpen('${jibanAreaEnc(g.key)}','${id}')"><b>公図ビューアで見る</b><br><span style="font-size:12px;font-weight:normal;">${esc(ds.name)}　${n}筆</span></button>`;
     }).join('');
     return `<section style="padding:12px 0;border-bottom:1px solid #e2e8ee;">
       <div style="display:flex;gap:8px;align-items:flex-start;"><div style="flex:1;"><b style="font-size:16px;color:#1e3a5f;">${esc(g.label)}</b>
@@ -283,6 +283,152 @@ function jibanAreaClear(showLayers){
   J.area=null; J.sel=null; draw();
   if(showLayers) openLayers();
   else if(panelOpen('jibanAreaPanel')) jibanRenderAreas(document.getElementById('jibanAreaSearch').value);
+}
+
+/* ---------- 任意座標の公図専用ビューア（背景地図を使わない） ---------- */
+const JV={ ds:null, key:'', indices:[], cx:0, cy:0, scale:1, ptr:new Map(), moved:false, ready:false };
+function jibanViewerOpen(encodedKey,dsId){
+  const key=decodeURIComponent(encodedKey), ds=J.items.find(d=>d.id===dsId&&d.kind==='free');
+  if(!ds){ toast('公図XMLが見つかりません'); return; }
+  const indices=[];
+  for(let i=0;i<J.data[ds.id].length;i++) if(jibanAreaKey(ds,J.data[ds.id][i])===key) indices.push(i);
+  if(!indices.length){ toast('選んだ小字の筆がありません'); return; }
+  const parts=JSON.parse(key), label=jibanAreaLabel(parts);
+  JV.ds=ds; JV.key=key; JV.indices=indices; JV.ptr.clear(); JV.moved=false;
+  document.getElementById('jibanViewerTitle').textContent=`${label} 公図ビューア`;
+  document.getElementById('jibanViewerCount').textContent=`${indices.length}筆`;
+  document.getElementById('jibanViewerInfo').innerHTML='<b>'+esc(ds.name)+'</b><br>筆をタップすると地番と属性を表示します。';
+  closePanel('jibanAreaPanel'); openPanel('jibanViewerPanel');
+  jibanViewerInit();
+  requestAnimationFrame(()=>{ jibanViewerResize(); jibanViewerFit(); });
+}
+function jibanViewerClose(){ JV.ptr.clear(); closePanel('jibanViewerPanel'); openJibanAreas(); }
+function jibanViewerCanvas(){ return document.getElementById('jibanViewerCanvas'); }
+function jibanViewerResize(){
+  const c=jibanViewerCanvas(); if(!c||!JV.ds) return;
+  const r=c.getBoundingClientRect(), d=Math.min(2,devicePixelRatio||1);
+  const w=Math.max(1,Math.round(r.width*d)), h=Math.max(1,Math.round(r.height*d));
+  if(c.width!==w||c.height!==h){ c.width=w; c.height=h; }
+  jibanViewerDraw();
+}
+function jibanViewerFit(){
+  if(!JV.ds) return;
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  const ps=J.data[JV.ds.id];
+  for(const i of JV.indices) for(const r of ps[i].r) for(let k=0;k<r.length;k+=2){
+    if(r[k]<x0)x0=r[k]; if(r[k]>x1)x1=r[k]; if(r[k+1]<y0)y0=r[k+1]; if(r[k+1]>y1)y1=r[k+1];
+  }
+  const c=jibanViewerCanvas(), rc=c.getBoundingClientRect(); if(!isFinite(x0)||!rc.width) return;
+  JV.cx=(x0+x1)/2; JV.cy=(y0+y1)/2;
+  JV.scale=Math.max(0.0001,Math.min(rc.width/Math.max(1,x1-x0),rc.height/Math.max(1,y1-y0))*0.88);
+  jibanViewerDraw();
+}
+function jibanViewerZoom(f){
+  JV.scale=Math.max(0.000001,Math.min(1e6,JV.scale*f)); jibanViewerDraw();
+}
+function jibanViewerPoint(sx,sy){
+  const c=jibanViewerCanvas(), r=c.getBoundingClientRect();
+  return [JV.cx+(sx-r.left-r.width/2)/JV.scale,JV.cy-(sy-r.top-r.height/2)/JV.scale];
+}
+function jibanViewerDraw(){
+  const c=jibanViewerCanvas(); if(!c||!JV.ds) return;
+  const g=c.getContext('2d'), rc=c.getBoundingClientRect(), d=c.width/Math.max(1,rc.width);
+  g.setTransform(d,0,0,d,0,0); g.clearRect(0,0,rc.width,rc.height);
+  const ps=J.data[JV.ds.id], sx=x=>(x-JV.cx)*JV.scale+rc.width/2, sy=y=>(JV.cy-y)*JV.scale+rc.height/2;
+  g.lineJoin='round'; g.lineCap='round'; g.strokeStyle=JIBAN_FREE_COLOR; g.fillStyle='rgba(232,89,12,.08)'; g.lineWidth=1.4;
+  for(const i of JV.indices){
+    g.beginPath();
+    for(const r of ps[i].r){ for(let k=0;k<r.length;k+=2) k?g.lineTo(sx(r[k]),sy(r[k+1])):g.moveTo(sx(r[k]),sy(r[k+1])); g.closePath(); }
+    g.fill('evenodd'); g.stroke();
+  }
+  if(JV.indices.length<=1200){
+    g.font='bold 12px system-ui,sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+    for(const i of JV.indices){
+      const r=ps[i].r[0]; let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+      for(let k=0;k<r.length;k+=2){ x0=Math.min(x0,r[k]);x1=Math.max(x1,r[k]);y0=Math.min(y0,r[k+1]);y1=Math.max(y1,r[k+1]); }
+      const x=sx((x0+x1)/2), y=sy((y0+y1)/2), t=ps[i].t||'';
+      if(!t||(x1-x0)*JV.scale<22||(y1-y0)*JV.scale<13) continue;
+      g.lineWidth=3;g.strokeStyle='rgba(255,255,255,.92)';g.strokeText(t,x,y);g.fillStyle='#9a3412';g.fillText(t,x,y);
+    }
+  }
+}
+function jibanViewerHit(clientX,clientY){
+  if(!JV.ds) return null;
+  const [x,y]=jibanViewerPoint(clientX,clientY), ps=J.data[JV.ds.id];
+  for(let n=JV.indices.length-1;n>=0;n--){ const i=JV.indices[n]; if(jibanInside(ps[i].r,x,y)) return ps[i]; }
+  return null;
+}
+function jibanViewerInit(){
+  if(JV.ready) return; JV.ready=true;
+  const c=jibanViewerCanvas();
+  const snap=()=>{ const a=Array.from(JV.ptr.values()); return a.length===2?{d:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y),x:(a[0].x+a[1].x)/2,y:(a[0].y+a[1].y)/2}:null; };
+  c.addEventListener('pointerdown',e=>{ c.setPointerCapture(e.pointerId); JV.ptr.set(e.pointerId,{x:e.clientX,y:e.clientY}); JV.pinch=snap(); JV.moved=false; });
+  c.addEventListener('pointermove',e=>{
+    const old=JV.ptr.get(e.pointerId); if(!old) return;
+    if(JV.ptr.size===1){ JV.cx-=(e.clientX-old.x)/JV.scale; JV.cy+=(e.clientY-old.y)/JV.scale; if(Math.hypot(e.clientX-old.x,e.clientY-old.y)>2)JV.moved=true; JV.ptr.set(e.pointerId,{x:e.clientX,y:e.clientY}); }
+    else{ const before=JV.pinch; JV.ptr.set(e.pointerId,{x:e.clientX,y:e.clientY}); const after=snap(); if(before&&after&&before.d>0){ const anchor=jibanViewerPoint(before.x,before.y); JV.scale=Math.max(.000001,Math.min(1e6,JV.scale*after.d/before.d)); const now=jibanViewerPoint(after.x,after.y); JV.cx+=anchor[0]-now[0]; JV.cy+=anchor[1]-now[1]; JV.moved=true; } JV.pinch=after; }
+    jibanViewerDraw();
+  });
+  const up=e=>{ const was=JV.ptr.get(e.pointerId); JV.ptr.delete(e.pointerId); JV.pinch=snap(); if(was&&!JV.moved&&!JV.ptr.size){ const p=jibanViewerHit(e.clientX,e.clientY), info=document.getElementById('jibanViewerInfo'); if(p){ const a=[p.o,p.a,p.k,p.y].filter(Boolean).join(' '); info.innerHTML=`<b>地番 ${esc(p.t||'（なし）')}</b>　${esc(a)}<br>精度区分 ${esc(p.q||'—')}　座標値種別 ${esc(p.s||'—')}`; } } };
+  c.addEventListener('pointerup',up); c.addEventListener('pointercancel',up);
+  c.addEventListener('wheel',e=>{ e.preventDefault(); const a=jibanViewerPoint(e.clientX,e.clientY), f=e.deltaY<0?1.18:0.85; JV.scale=Math.max(.000001,Math.min(1e6,JV.scale*f)); const b=jibanViewerPoint(e.clientX,e.clientY); JV.cx+=a[0]-b[0];JV.cy+=a[1]-b[1];jibanViewerDraw(); },{passive:false});
+  window.addEventListener('resize',()=>{ if(panelOpen('jibanViewerPanel')) jibanViewerResize(); });
+}
+
+/* ---------- G空間情報センターからウェブ取得 ---------- */
+const JIBAN_CKAN='https://www.geospatial.jp/ckan/api/3/action/';
+const JW={ results:[] };
+function openJibanWeb(){
+  closePanel('jibanAreaPanel');
+  document.getElementById('jibanWebStatus').textContent='市区町村名を入力して検索してください。';
+  document.getElementById('jibanWebRows').innerHTML='';
+  openPanel('jibanWebPanel');
+}
+function jibanWebOpenAccount(){ window.open('https://front.geospatial.jp/how_to_use/manual8/','_blank','noopener'); }
+function jibanWebToken(){ return String(document.getElementById('jibanWebToken').value||'').trim(); }
+async function jibanWebJson(action,params){
+  const u=new URL(JIBAN_CKAN+action); Object.entries(params||{}).forEach(([k,v])=>u.searchParams.set(k,v));
+  const r=await fetch(u,{headers:{Accept:'application/json'}}); if(!r.ok) throw new Error(`公式APIが応答しません（${r.status}）`);
+  const x=await r.json(); if(!x.success) throw new Error('公式APIから検索結果を取得できません'); return x.result;
+}
+function jibanWebZipResources(pkg){
+  return (pkg.resources||[]).filter(r=>/\.zip$/i.test(r.name||r.url||'')).sort((a,b)=>{
+    const ya=+(String(a.name).match(/(20\d{2})\.zip$/i)||[0,0])[1], yb=+(String(b.name).match(/(20\d{2})\.zip$/i)||[0,0])[1]; return yb-ya;
+  });
+}
+function jibanWebSize(n){ if(!+n)return ''; return +n>1048576?(+n/1048576).toFixed(0)+'MB':Math.ceil(+n/1024)+'KB'; }
+async function jibanWebSearch(){
+  const city=String(document.getElementById('jibanWebCity').value||'').trim();
+  if(!city){ toast('市区町村名を入力してください'); return; }
+  const st=document.getElementById('jibanWebStatus'), box=document.getElementById('jibanWebRows');
+  st.textContent='G空間情報センターを検索しています…'; box.innerHTML='';
+  try{
+    const r=await jibanWebJson('package_search',{q:`${city} 登記所備付地図データ`,rows:'50'});
+    JW.results=(r.results||[]).filter(p=>String(p.owner_org||'').startsWith('moj-')&&jibanWebZipResources(p).length);
+    st.textContent=`${JW.results.length}件見つかりました。最新版を取得します。`;
+    box.innerHTML=JW.results.length?JW.results.map((p,i)=>{ const z=jibanWebZipResources(p)[0]; return `<div class="listRow"><span style="flex:1"><b>${esc(p.title||p.name)}</b><br><span style="font-size:12px;color:#667085;">${esc(z.name||'XML ZIP')} ${jibanWebSize(z.size)}</span></span><button type="button" class="saveBtn" style="margin:0;width:auto;background:#e8590c;" onclick="jibanWebDownload(${i})">取得して見る</button></div>`; }).join(''):'<div class="noteBox">該当する公式XMLが見つかりません。市区町村名を「長崎市」のように入力してください。</div>';
+  }catch(e){
+    st.textContent=e.message||e; box.innerHTML='<div class="noteBox">公式サイトが混雑中、またはブラウザからの通信が制限されています。時間をおいて再検索するか、公式配布ページを開いてください。</div><button type="button" class="saveBtn" onclick="window.open(\'https://front.geospatial.jp/moj-chizu-xml-readme/moj-chizu-xml-download/\',\'_blank\',\'noopener\')">公式配布ページを開く</button>';
+  }
+}
+async function jibanWebDownload(i){
+  const p=JW.results[i], z=p&&jibanWebZipResources(p)[0]; if(!p||!z) return;
+  if(!document.getElementById('jibanWebAgree').checked){ toast('利用規約を確認し、同意欄にチェックしてください'); return; }
+  const token=jibanWebToken(); if(!token){ toast('G空間情報センターのAPIトークンを入力してください'); return; }
+  showProgress(`${z.name}を公式サイトから取得しています…`);
+  try{
+    const r=await fetch(z.url,{headers:{Authorization:token,Accept:'application/zip'}});
+    if(!r.ok) throw new Error(`取得できません（${r.status}）`);
+    const b=await r.arrayBuffer(), u=new Uint8Array(b,0,Math.min(4,b.byteLength));
+    if(b.byteLength<4||u[0]!==0x50||u[1]!==0x4b) throw new Error('ZIPではなくログイン画面が返されました');
+    hideProgress(); closePanel('jibanWebPanel');
+    await jibanImportFiles([new File([b],z.name||'houmukyoku.zip',{type:'application/zip'})]);
+    openJibanAreas();
+  }catch(e){
+    hideProgress();
+    const page=`https://www.geospatial.jp/ckan/dataset/${encodeURIComponent(p.name||p.id)}`;
+    showAlert('公式サイトから直接取得できませんでした：'+esc(e.message||e)+'<br>ログインや利用規約への同意が必要な場合は、公式ページで手続きをしてください。',[{label:'公式ページを開く',fn:`window.open('${page}','_blank','noopener');hideAlert()`},{label:'閉じる',fn:'hideAlert()'}]);
+  }
 }
 async function jibanImportFiles(fileList){
   if(J.busy){ toast('取り込み中です'); return; }
@@ -784,8 +930,8 @@ function jibanLayerHtml(){
     <button type="button" class="del" style="background:${J.labels?'#e7f0fb':'#f0f0f0'};color:${J.labels?'#1e73d2':'#999'};min-width:52px;" onclick="jibanToggleLabels()">${J.labels?'地番あり':'地番なし'}</button>
     <button type="button" class="del" style="flex:1;background:#e7f0fb;color:#1e3a5f;" onclick="jibanPick()">地図XML（.xml／.zip）を取り込む</button></div>`;
   const nArea=jibanAreaGroups().length;
-  if(nArea) h+=`<div class="listRow" style="padding-top:0;">
-    <button type="button" class="saveBtn" style="margin:0;flex:1;background:#e8590c;" onclick="openJibanAreas()">小字別に公図を見る（${nArea}小字）</button>
+  h+=`<div class="listRow" style="padding-top:0;">
+    <button type="button" class="saveBtn" style="margin:0;flex:1;background:#e8590c;" onclick="openJibanAreas()">${nArea?`小字別に公図を見る（${nArea}小字）`:'ウェブ取得・公図ビューア'}</button>
     ${J.area?`<button type="button" class="del" onclick="jibanAreaClear(true)">全XML表示</button>`:''}</div>`;
   if(J.area) h+=`<div class="noteBox" style="margin:0 0 8px;border-color:#fdba74;background:#fff7ed;"><b>表示中：${esc(J.area.label)}</b><br>${esc(J.area.city||'')}／選択したXMLだけを表示しています。</div>`;
   for(const d of J.items){
@@ -797,7 +943,7 @@ function jibanLayerHtml(){
       ${free?`<button type="button" class="del" style="background:#fff1e6;color:#c2410c;" onclick="jibanPlaceStart('${d.id}')">位置合わせ</button>`:''}
       <button type="button" class="del" onclick="jibanDel('${d.id}')">削除</button></div>`;
   }
-  if(!J.items.length) h+='<p style="color:#888;font-size:14px;">G空間情報センターの「登記所備付地図データ」（市区町村ごとのzip）をそのまま選べます。地籍調査が済んでいない地区（任意座標系）は、取り込み後に［位置合わせ］で2点を合わせます。</p>';
+  if(!J.items.length) h+='<p style="color:#888;font-size:14px;">［ウェブ取得・公図ビューア］から市区町村を検索して公式XMLを取得できます。手元のXML／ZIPを選ぶ方法も使えます。</p>';
   return h;
 }
 jibanInit();
