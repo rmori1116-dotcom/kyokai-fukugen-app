@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#1e3a5f">
+<meta name="theme-color" content="#405166">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -117,6 +117,195 @@
     .panel .sheet { max-height:98%; border-radius:12px 12px 0 0; }
     #ribbonTabs button { min-height:48px; }
     .rbtn, .rsel { min-height:58px; }
+  }
+
+  /* ===== OH3を参考にした、地図を主役にするフローティングUI ===== */
+  :root {
+    --uiSlate:#405166;
+    --uiSlateDeep:#303d4c;
+    --uiSlateSoft:#5d6d7e;
+    --uiAccent:#0b86d1;
+    --uiAccentSoft:#e4f3fc;
+    --uiSurface:rgba(250,252,254,.96);
+    --uiLine:#d5dde6;
+    --uiText:#1f2b37;
+    --uiMuted:#647384;
+    --uiShadow:0 10px 30px rgba(24,39,56,.22);
+  }
+  html,body { color:var(--uiText); background:#dce6ef; }
+  header {
+    min-height:46px; padding:7px 12px; gap:8px;
+    background:linear-gradient(110deg,var(--uiSlateDeep),var(--uiSlate));
+    box-shadow:0 2px 10px rgba(20,32,46,.24); z-index:20;
+  }
+  header .title { font-size:15px; letter-spacing:.02em; }
+  header .title small { opacity:.78 !important; }
+  #siteChip,#progChip,#dateBadge,#offlineBadge {
+    min-height:32px; display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,255,255,.14); border-radius:16px;
+    background:rgba(255,255,255,.13); padding:4px 10px;
+  }
+  #siteChip:active { background:rgba(255,255,255,.24); }
+  #gpsInfo { font-size:12px; opacity:.94; }
+  #mapWrap { background:linear-gradient(145deg,#d9e4ec,#eef3f7); }
+
+  /* 下部の操作は、地図の上に浮く2段のカードとしてまとめる */
+  #ribbon {
+    position:absolute; left:12px; right:12px;
+    bottom:calc(12px + env(safe-area-inset-bottom,0px));
+    border:0; background:transparent; box-shadow:none; z-index:15;
+    pointer-events:none;
+  }
+  #ribbonWrap,#ribbonTabs { pointer-events:auto; }
+  #ribbonWrap {
+    overflow:hidden; margin-bottom:8px;
+    border:1px solid rgba(255,255,255,.76); border-radius:18px;
+    background:var(--uiSurface); box-shadow:var(--uiShadow);
+    -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px);
+  }
+  #ribbonCmd { padding:7px 8px 5px; }
+  .rgroup { padding-inline:7px; border-right:1px solid var(--uiLine); }
+  .rgroup .glabel { color:var(--uiMuted); font-weight:600; letter-spacing:.06em; }
+  .rbtn {
+    min-height:66px; border-radius:13px; color:var(--uiText);
+    transition:background .12s ease,border-color .12s ease,transform .12s ease;
+  }
+  .rbtn:active { transform:scale(.97); background:var(--uiAccentSoft); border-color:#9bcce9; }
+  .rbtn.on { background:var(--uiAccentSoft); border-color:#78bce4; color:#075f97; }
+  .rsel select,.rsel input.rnum,.rsel .rnow {
+    border-radius:11px; border-color:#bdc9d5; background:#fff;
+  }
+  #redgeR { background:linear-gradient(to right,rgba(250,252,254,0),#fafcfe 65%); }
+  #redgeL { background:linear-gradient(to left,rgba(250,252,254,0),#fafcfe 65%); }
+  #ribbonTabs {
+    gap:4px; padding:4px; overflow:hidden;
+    border:1px solid rgba(255,255,255,.16); border-radius:18px;
+    background:rgba(48,61,76,.96); box-shadow:var(--uiShadow);
+    -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+  }
+  #ribbonTabs button {
+    min-height:58px; margin:0; padding:8px 3px;
+    border:0; border-radius:14px; color:rgba(255,255,255,.78);
+  }
+  #ribbonTabs button.active {
+    color:#17496d; background:#fff; border:0;
+    box-shadow:0 3px 10px rgba(0,0,0,.20);
+  }
+
+  /* 地図操作はOH3のような濃色の縦ツール群にする */
+  #zoomBox {
+    right:18px; bottom:269px; padding:4px; gap:2px;
+    border-radius:18px; overflow:visible;
+    background:rgba(48,61,76,.94); box-shadow:var(--uiShadow);
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+  }
+  #zoomBox button {
+    width:52px; height:50px; border-radius:14px;
+    background:transparent; color:#fff; font-weight:400;
+  }
+  #zoomBox button+button { border-top:1px solid rgba(255,255,255,.16); }
+  #zoomBox button:active { background:rgba(255,255,255,.18); }
+  #followBtn {
+    right:18px; bottom:205px; width:56px; height:56px;
+    border-radius:18px; color:#fff; background:rgba(48,61,76,.94);
+    box-shadow:var(--uiShadow);
+  }
+  #followBtn.on { background:var(--uiAccent); }
+  #zoomLevel {
+    left:16px; right:auto; bottom:205px;
+    min-height:34px; display:flex; align-items:center;
+    border:1px solid rgba(255,255,255,.76); border-radius:17px;
+    background:var(--uiSurface); color:var(--uiSlateDeep); padding:5px 11px;
+    box-shadow:0 5px 16px rgba(24,39,56,.18);
+  }
+  #actionbar { bottom:201px; padding:10px 84px 10px 12px; }
+  .bigbtn,.sidebtn,#stakeBar,#memoTools {
+    border:1px solid rgba(255,255,255,.72); box-shadow:var(--uiShadow);
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+  }
+  .bigbtn,.sidebtn,#stakeBar,#memoTools { border-radius:16px; }
+  #fixBar {
+    top:12px; right:18px; border:1px solid rgba(255,255,255,.16);
+    border-radius:16px; background:rgba(48,61,76,.94); box-shadow:var(--uiShadow);
+  }
+  #jobBar { bottom:calc(env(safe-area-inset-bottom,0px) + 201px); border-radius:16px; }
+
+  /* ダイアログは中央のカード、スマホでは大きなボトムシート */
+  .panel {
+    padding:60px 18px 164px; background:rgba(28,39,52,.42);
+    -webkit-backdrop-filter:blur(4px); backdrop-filter:blur(4px);
+  }
+  .panel.show { display:flex; align-items:center; justify-content:center; }
+  .panel .sheet {
+    position:relative; inset:auto; width:min(720px,100%); max-height:calc(100vh - 116px);
+    border:1px solid rgba(255,255,255,.8); border-radius:22px;
+    background:var(--uiSurface); box-shadow:0 22px 60px rgba(20,31,44,.30);
+    padding:18px 20px calc(20px + env(safe-area-inset-bottom,0px));
+  }
+  .sheet h2 {
+    position:sticky; top:-18px; z-index:3; margin:-18px -20px 14px;
+    padding:14px 14px 10px 20px; color:var(--uiSlateDeep);
+    background:rgba(250,252,254,.96); border-bottom:1px solid var(--uiLine);
+    border-radius:22px 22px 0 0; -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+  }
+  .sheet h2 .close {
+    background:#e7edf3; color:#3b4b5b; border-radius:14px;
+  }
+  .menuItem {
+    margin-bottom:8px; padding:14px; border:1px solid var(--uiLine);
+    border-radius:14px; background:#fff;
+  }
+  .menuItem:active { background:var(--uiAccentSoft); border-color:#9bcce9; }
+  .formRow input,.formRow select,.listRow input,.listRow select {
+    border-color:#bdc9d5; border-radius:11px; background:#fff;
+  }
+  .listRow { border-bottom-color:#e2e8ee; }
+  .saveBtn { background:var(--uiAccent); border-radius:14px; box-shadow:0 5px 14px rgba(11,134,209,.24); }
+  .seg { border-color:#bdc9d5; border-radius:12px; }
+  .seg.on { background:var(--uiAccent); border-color:var(--uiAccent); }
+  .noteBox { border-radius:12px; }
+  #toast { top:58px; border-radius:16px; background:rgba(48,61,76,.96); box-shadow:var(--uiShadow); }
+
+  @media (max-width:720px) {
+    header { min-height:48px; padding:7px 8px; }
+    header .title { font-size:13px; }
+    #siteChip,#progChip { min-height:34px; padding-inline:8px; }
+    #gpsInfo { max-width:42%; font-size:11px; }
+    #ribbon { left:8px; right:8px; bottom:calc(8px + env(safe-area-inset-bottom,0px)); }
+    #ribbonWrap { margin-bottom:6px; border-radius:16px; }
+    #ribbonCmd { padding-inline:5px; }
+    #ribbonTabs { gap:2px; border-radius:16px; }
+    #ribbonTabs button { min-height:56px; border-radius:12px; }
+    #zoomBox { right:10px; bottom:263px; }
+    #followBtn { right:10px; bottom:199px; }
+    #zoomLevel { left:10px; bottom:199px; }
+    #actionbar { bottom:195px; padding-right:74px; }
+    #jobBar { bottom:calc(env(safe-area-inset-bottom,0px) + 195px); }
+    .panel { padding:0; }
+    .panel.show { display:block; }
+    .panel .sheet {
+      position:absolute; left:0; right:0; bottom:0; width:100%; max-height:92%;
+      border-left:0; border-right:0; border-bottom:0; border-radius:22px 22px 0 0;
+      padding:16px max(16px,env(safe-area-inset-right,0px))
+        calc(18px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
+    }
+    .sheet h2 { top:-16px; margin:-16px -16px 12px; padding:12px 10px 8px 16px; }
+  }
+  @media (max-height:560px) and (orientation:landscape) {
+    #ribbon { right:82px; bottom:6px; }
+    #ribbonWrap { margin-bottom:4px; }
+    #ribbonCmd { padding-block:3px; }
+    .rbtn,.rsel { min-height:54px; }
+    #ribbonTabs button { min-height:48px; padding-block:5px; }
+    #ribbonTabs button .tic { display:none; }
+    #zoomBox { right:10px; bottom:78px; }
+    #followBtn { right:10px; bottom:14px; }
+    #zoomLevel { left:10px; bottom:116px; }
+    #actionbar { bottom:104px; padding-right:76px; }
+    #jobBar { bottom:112px; }
+    .panel { padding:8px 90px 8px 8px; }
+    .panel.show { display:flex; }
+    .panel .sheet { position:relative; inset:auto; max-height:100%; border-radius:18px; }
   }
 </style>
 </head>
