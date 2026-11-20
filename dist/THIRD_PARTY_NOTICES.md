@@ -1,6 +1,6 @@
 # Third-party notices
 
-全国地番図のブラウザ内読取に、次のライブラリを同梱しています。
+法務局地番図のブラウザ内読取に、次のライブラリを同梱しています。
 
 - PMTiles 4.5.0 — BSD 3-Clause License — https://github.com/protomaps/PMTiles
 - @mapbox/vector-tile 3.0.0 — BSD 3-Clause License — https://github.com/mapbox/vector-tile-js
@@ -8,7 +8,7 @@
 - @mapbox/point-geometry 1.1.0 — ISC License — https://github.com/mapbox/point-geometry
 - fflate 0.8.2 — MIT License — https://github.com/101arrowz/fflate
 
-全国地番図は、法務省の登記所備付地図データを AMX Project が PMTiles 化し、農研機構 HABS が公開しているミラーを参照します。表示は公共座標の区域に限られ、境界確定・登記の証明には使用できません。
+法務局地番図は、法務省の登記所備付地図データを AMX Project が PMTiles 化し、農研機構 HABS が公開しているミラーを参照します。表示は公共座標の区域に限られ、境界確定・登記の証明には使用できません。
 
 ## PMTiles 4.5.0 (BSD 3-Clause)
 

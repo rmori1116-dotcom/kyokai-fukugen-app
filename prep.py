@@ -32,7 +32,7 @@ if '<!--@APP-->' not in text:
 text = text.replace('<!--@APP-->', app)
 # 地番図（法務省 地図XML）の機能（jiban.js）を差し込む
 text = text.replace('<!--@JIBAN-->', (here / 'jiban.js').read_text(encoding='utf-8'))
-# 全国地番図（オンライン・公共座標）の機能を差し込む
+# 法務局地番図（オンライン・公共座標）の機能を差し込む
 text = text.replace('<!--@NATIONAL_JIBAN-->', (here / 'national-chiban.js').read_text(encoding='utf-8'))
 
 used = []

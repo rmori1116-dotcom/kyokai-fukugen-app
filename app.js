@@ -460,7 +460,7 @@ function fillDefaults(){
   ['pt','ref','line','plotName','route','dist','memo','base','map','stNone','stDa','stKi'].forEach(k=>{
     if(store.layers[k]===undefined) store.layers[k]=true;
   });
-  /* 全国地番図は通信を使うため、旧版から更新した直後に勝手に通信・表示しない。 */
+  /* 法務局地番図は通信を使うため、旧版から更新した直後に勝手に通信・表示しない。 */
   if(store.layers.nationalJiban===undefined) store.layers.nationalJiban=false;
   if(!Array.isArray(store.layers.hiddenImports)) store.layers.hiddenImports=[];
   if(!Array.isArray(store.layers.hiddenPlotNames)) store.layers.hiddenPlotNames=[];
@@ -1815,7 +1815,7 @@ function toggleLayer(k){
 }
 function layerName(k){
   return {pt:'境界点',line:'画地の線',plotName:'画地名（地番）',route:'計測線',dist:'距離',ref:'基準点',
-          memo:'手書きメモ',base:'図面',map:'背景地図',nationalJiban:'全国地番図',jiban:'取込地番図',
+          memo:'手書きメモ',base:'図面',map:'背景地図',nationalJiban:'法務局地番図',jiban:'取込地番図',
           stDa:'打設',stKi:'既設',stNone:'未'}[k]||k;
 }
 /* 取込ファイルごとの色。線と地番名だけに効く（境界点は記録の状態の色のまま） */

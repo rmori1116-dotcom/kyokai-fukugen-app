@@ -1,4 +1,4 @@
-/* ================= 全国地番図（オンライン・公共座標） =================
+/* ================= 法務局地番図（オンライン・公共座標） =================
    法務省の登記所備付地図データを AMX Project が PMTiles 化し、
    農研機構の HABS が公開しているミラーから、いま見ている範囲だけを読む。
 
@@ -11,7 +11,7 @@ const NATIONAL_CHIBAN_MAX_TILES = 64;
 const NATIONAL_CHIBAN_CACHE_MAX = 72;
 const NATIONAL_CHIBAN_LABEL_MAX = 300;
 const NATIONAL_CHIBAN_COLOR = '#c2255c';
-const NATIONAL_CHIBAN_CREDIT = '全国地番図：法務省 地図XML／AMX Project（公共座標・参考表示）';
+const NATIONAL_CHIBAN_CREDIT = '法務局地番図：法務省 地図XML／AMX Project（公共座標・参考表示）';
 
 const NC = {
   archive:null, tiles:new Map(), redrawPending:false,
@@ -219,11 +219,11 @@ function drawNationalJibanLabels(){
 
 function nationalJibanHintHtml(){
   if(!nationalJibanEnabled() || !NC.last || NC.last.test) return '';
-  if(NC.last.tooFar) return '全国地番図はもっと拡大すると表示します<span class="sub">オンライン・公共座標の区域</span>';
-  if(NC.last.loading && !NC.last.features) return '全国地番図を読み込み中<span class="sub">初回は通信が必要です</span>';
-  if(NC.last.errors && !NC.last.features) return '全国地番図を読み込めません<span class="sub">通信状態を確認してください</span>';
+  if(NC.last.tooFar) return '法務局地番図はもっと拡大すると表示します<span class="sub">オンライン・公共座標の区域</span>';
+  if(NC.last.loading && !NC.last.features) return '法務局地番図を読み込み中<span class="sub">初回は通信が必要です</span>';
+  if(NC.last.errors && !NC.last.features) return '法務局地番図を読み込めません<span class="sub">通信状態を確認してください</span>';
   if(NC.last.requested && NC.last.ready===NC.last.requested && !NC.last.features)
-    return 'この場所には重ねられる全国地番図がありません<span class="sub">任意座標の区域は地図XMLを取り込んで位置合わせ</span>';
+    return 'この場所には重ねられる法務局地番図がありません<span class="sub">任意座標の区域は地図XMLを取り込んで位置合わせ</span>';
   return '';
 }
 
@@ -240,8 +240,8 @@ function nationalJibanLayerHtml(){
   return `<div class="listRow">
     <button type="button" class="del" style="background:${on?'#e7f0fb':'#f0f0f0'};color:${on?'#1e73d2':'#999'};min-width:52px;"
       onclick="toggleLayer('nationalJiban')">${on?'表示':'非表示'}</button>
-    <span class="layerCol" style="background:${NATIONAL_CHIBAN_COLOR}" title="全国地番図の色"></span>
-    <span style="flex:1">全国地番図（事前取込不要）</span><span class="coords">${esc(info)}</span></div>
+    <span class="layerCol" style="background:${NATIONAL_CHIBAN_COLOR}" title="法務局地番図の色"></span>
+    <span style="flex:1">法務局地番図（事前取込不要）</span><span class="coords">${esc(info)}</span></div>
   <div class="noteBox" style="margin:0 0 8px;font-size:12.5px;line-height:1.55;">
     表示にすると、現在地周辺だけを通信で読み込みます。法務省データのうち<b>公共座標で重ねられる区域</b>が対象です。境界確定・登記の証明には使えません。
   </div>`;
