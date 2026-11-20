@@ -91,7 +91,12 @@ page.on('console',m=>{ if(m.type()==='error') errors.push('console: '+m.text());
 page.on('dialog',d=>d.accept());
 await page.addInitScript(()=>{ self.__noTiles=true; });
 await page.goto(BASE);
-await page.waitForFunction(()=>typeof jibanParseXml==='function' && J.loaded);
+await page.waitForFunction(()=>typeof jibanParseXml==='function' && typeof nationalJibanLayerHtml==='function' && J.loaded);
+ok('全国地番図の読取ライブラリを内蔵', await page.evaluate(()=>!!(globalThis.NationalChibanVendor&&NationalChibanVendor.PMTiles&&NationalChibanVendor.VectorTile)));
+eq('全国地番図は初期状態で非表示', await page.evaluate(()=>store.layers.nationalJiban), false);
+const llRound=await page.evaluate(()=>{ const z=16,n=2**z,t=nationalJibanLLToTile(139.6917,35.6895,z); return nationalJibanTileToLL(t[0]/n,t[1]/n); });
+near('全国タイルの経度変換', llRound[0], 139.6917, 1e-8);
+near('全国タイルの緯度変換', llRound[1], 35.6895, 1e-8);
 
 /* 1. 読み取り */
 const parsed=await page.evaluate(x=>{ const r=jibanParseXml(x); return { crs:r.head.crs, city:r.head.city, n:r.parcels.length, verts:r.verts,
@@ -207,7 +212,14 @@ eq('オフラインでも読める', off, 3); await bctx.setOffline(false);
 await page.evaluate(()=>openLayers());
 const html=await page.evaluate(()=>document.getElementById('otherLayers').innerHTML);
 ok('レイヤ画面に地番図が出る', html.includes('地番図（法務省 地図XML）'));
+ok('レイヤ画面に全国地番図が出る', html.includes('全国地番図（事前取込不要）'));
+ok('全国地番図は事前取込不要と案内', html.includes('現在地周辺だけを通信で読み込みます'));
 ok('取り込みボタンがある', html.includes('jibanPick()')); ok('位置合わせボタンがある（公図のみ）', (html.match(/位置合わせ/g)||[]).length===1, (html.match(/位置合わせ/g)||[]).length);
+await page.evaluate(()=>toggleLayer('nationalJiban'));
+eq('全国地番図を表示へ切り替えられる', await page.evaluate(()=>store.layers.nationalJiban), true);
+ok('全国地番図の表示状態がレイヤ画面へ反映', await page.evaluate(()=>nationalJibanLayerHtml().includes('>表示</button>')));
+await page.evaluate(()=>toggleLayer('nationalJiban'));
+eq('全国地番図を非表示へ戻せる', await page.evaluate(()=>store.layers.nationalJiban), false);
 await page.evaluate(()=>{ toggleLayer('jiban'); });
 eq('レイヤを非表示にすると描かない', await page.evaluate(()=>jibanSets().length), 0);
 await page.evaluate(()=>{ toggleLayer('jiban'); jibanSetAlpha(40); });

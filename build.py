@@ -2,7 +2,7 @@
 """fukugen-map.html をビルドする。
 template.html の <!--@LIB:xxx--> をライブラリ本体に置換し、
 sw.js にはHTMLの内容ハッシュを版番号として埋め込む（更新検知のため）。"""
-import hashlib, pathlib, re, sys, datetime
+import hashlib, pathlib, re, sys, datetime, shutil
 
 here = pathlib.Path(__file__).resolve().parent
 # ライブラリの置き場所。ソース一式に同梱した lib/ を優先する
@@ -16,6 +16,7 @@ LIBS = {
     'geotiff':  lib / 'geotiff.js',
     'proj4':    lib / 'proj4.js',
     'encoding': lib / 'encoding.js',
+    'national-chiban': lib / 'national-chiban-vendor.js',
 }
 
 html = (here / 'template.html').read_text(encoding='utf-8')
@@ -43,6 +44,7 @@ sw = (here / 'sw.src.js').read_text(encoding='utf-8').replace('@@VERSION@@', ver
 (dist / 'index.html').write_text(html, encoding='utf-8')
 (dist / 'sw.js').write_text(sw, encoding='utf-8')
 (dist / '.nojekyll').write_text('', encoding='utf-8')
+shutil.copyfile(here / 'THIRD_PARTY_NOTICES.md', dist / 'THIRD_PARTY_NOTICES.md')
 
 print(f'fukugen-map.html  {len(html.encode("utf-8"))/1024:.0f} KB   version={ver}')
 print(f'sw.js             {len(sw.encode("utf-8"))/1024:.1f} KB')

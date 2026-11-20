@@ -27,7 +27,7 @@ const store = {
   settings: Object.assign({}, DEFAULT_SETTINGS),
   disp: {},
   layers: { pt:true, ref:true, line:true, plotName:true, route:true, dist:true, memo:true,
-            base:true, map:true, hiddenImports:[], hiddenPlotNames:[],
+            base:true, map:true, nationalJiban:false, hiddenImports:[], hiddenPlotNames:[],
             stNone:true, stDa:true, stKi:true }
 };
 const state = {
@@ -448,7 +448,7 @@ function resetStoreData(){
   store.routes=[]; store.strokes=[]; store.imports=[];
   store.disp=Object.assign({}, DEFAULT_DISP);
   store.layers={ pt:true, ref:true, line:true, plotName:true, route:true, dist:true, memo:true,
-                 base:true, map:true, hiddenImports:[], hiddenPlotNames:[],
+                 base:true, map:true, nationalJiban:false, hiddenImports:[], hiddenPlotNames:[],
                  stNone:true, stDa:true, stKi:true };
   store.settings.lastView=null;
   store.settings.lastExport=null;
@@ -460,6 +460,8 @@ function fillDefaults(){
   ['pt','ref','line','plotName','route','dist','memo','base','map','stNone','stDa','stKi'].forEach(k=>{
     if(store.layers[k]===undefined) store.layers[k]=true;
   });
+  /* 全国地番図は通信を使うため、旧版から更新した直後に勝手に通信・表示しない。 */
+  if(store.layers.nationalJiban===undefined) store.layers.nationalJiban=false;
   if(!Array.isArray(store.layers.hiddenImports)) store.layers.hiddenImports=[];
   if(!Array.isArray(store.layers.hiddenPlotNames)) store.layers.hiddenPlotNames=[];
   if(!store.disp) store.disp={};
@@ -744,6 +746,7 @@ function draw(){
     ctx.restore();
     scheduleDetail();
   }
+  if(typeof drawNationalJiban==='function') drawNationalJiban();
   if(typeof drawJiban==='function') drawJiban();
   if(store.layers.memo!==false) for(const s of store.strokes){
     ctx.strokeStyle=s.color; ctx.lineWidth=Math.max(1,s.w*state.view.scale);
@@ -903,6 +906,7 @@ function draw(){
   for(const [A,B,t] of distJobs) drawDistLabel(A,B,t,distPx);
   /* --- 画地名（地番）--- */
   for(const [cx,cy,text,px,col] of plotDraw) drawPlotName(cx,cy,text,px,col);
+  if(typeof drawNationalJibanLabels==='function') drawNationalJibanLabels();
   if(typeof drawJibanLabels==='function') drawJibanLabels();
   if(state.gps.ok){
     const [x,y]=toScr(state.gps.x,state.gps.y);
@@ -1149,6 +1153,9 @@ function updateHint(){
   }
   if(state.drawInfo.mode==='dot' && state.drawInfo.n)
     msgs.push(`点だけ表示（${state.drawInfo.n}点）<span class="sub">拡大すると点名まで出ます</span>`);
+  if(typeof nationalJibanHintHtml==='function'){
+    const h=nationalJibanHintHtml(); if(h) msgs.push(h);
+  }
   if(!msgs.length){ el.style.display='none'; el.innerHTML=''; return; }
   el.style.display='block';
   el.style.background='rgba(30,58,95,.90)';
@@ -1748,6 +1755,7 @@ function openLayers(){
     }
     return row;
   }).join('');
+  if(typeof nationalJibanLayerHtml==='function') document.getElementById('otherLayers').insertAdjacentHTML('beforeend', nationalJibanLayerHtml());
   if(typeof jibanLayerHtml==='function') document.getElementById('otherLayers').insertAdjacentHTML('beforeend', jibanLayerHtml());
   const c=progCounts();
   const sts=[['stDa','打設',c.da,disp('stDaColor'),'stDaColor'],
@@ -1807,7 +1815,7 @@ function toggleLayer(k){
 }
 function layerName(k){
   return {pt:'境界点',line:'画地の線',plotName:'画地名（地番）',route:'計測線',dist:'距離',ref:'基準点',
-          memo:'手書きメモ',base:'図面',map:'背景地図',jiban:'地番図',
+          memo:'手書きメモ',base:'図面',map:'背景地図',nationalJiban:'全国地番図',jiban:'取込地番図',
           stDa:'打設',stKi:'既設',stNone:'未'}[k]||k;
 }
 /* 取込ファイルごとの色。線と地番名だけに効く（境界点は記録の状態の色のまま） */
@@ -1840,13 +1848,13 @@ function toggleImportLayer(id){
 function showAllLayers(){
   store.layers.hiddenImports=[];
   store.layers.hiddenPlotNames=[];
-  ['pt','ref','line','plotName','route','dist','memo','base','map','stNone','stDa','stKi']
+  ['pt','ref','line','plotName','route','dist','memo','base','map','nationalJiban','stNone','stDa','stKi']
     .forEach(k=>store.layers[k]=true);
   save(); openLayers(); draw(); renderRibbon();
   toast('すべて表示にしました');
 }
 function layerNowText(){
-  const kinds=['pt','ref','line','plotName','route','dist','memo','base','map'];
+  const kinds=['pt','ref','line','plotName','route','dist','memo','base','map','nationalJiban'];
   const off=kinds.filter(k=>store.layers[k]===false).length + (store.layers.hiddenImports||[]).length;
   const stOff=['stDa','stKi','stNone'].filter(k=>store.layers[k]===false).map(layerName);
   const pn=(store.layers.hiddenPlotNames||[]).filter(i=>importById(i)).length;

@@ -5,18 +5,23 @@
 import pathlib, re, sys, zipfile
 
 here = pathlib.Path(__file__).resolve().parent
-SRC = here.parent / 'build' / 'template.html'          # v1.7 のソース
-SRC_ZIP = here.parent / 'ソース一式_地図版_v1.7.zip'   # 配布一式での代替元
+SRC = here.parent / 'build' / 'template.html'          # 旧配置: v1.7 のソース
+SRC_ZIPS = [
+    here.parent / '06_ソース' / 'ソース一式_地図版_v1.7.zip',  # 現在の整理済み配置
+    here.parent / 'ソース一式_地図版_v1.7.zip',                 # 旧配置
+]
 IN  = here / 'template.src.html'
 OUT = here / 'template.html'
+src_zip = next((p for p in SRC_ZIPS if p.is_file()), None)
 
 if SRC.is_file():
     src_text = SRC.read_text(encoding='utf-8')
-elif SRC_ZIP.is_file():
-    with zipfile.ZipFile(SRC_ZIP) as zf:
+elif src_zip is not None:
+    with zipfile.ZipFile(src_zip) as zf:
         src_text = zf.read('template.html').decode('utf-8-sig')
 else:
-    sys.exit(f'選点アプリ v1.7 の template.html がありません: {SRC} / {SRC_ZIP}')
+    sys.exit('選点アプリ v1.7 の template.html がありません: '
+             + ' / '.join(str(p) for p in [SRC, *SRC_ZIPS]))
 src_lines = src_text.split('\n')
 text = IN.read_text(encoding='utf-8')
 
@@ -27,6 +32,8 @@ if '<!--@APP-->' not in text:
 text = text.replace('<!--@APP-->', app)
 # 地番図（法務省 地図XML）の機能（jiban.js）を差し込む
 text = text.replace('<!--@JIBAN-->', (here / 'jiban.js').read_text(encoding='utf-8'))
+# 全国地番図（オンライン・公共座標）の機能を差し込む
+text = text.replace('<!--@NATIONAL_JIBAN-->', (here / 'national-chiban.js').read_text(encoding='utf-8'))
 
 used = []
 def sub(m):
