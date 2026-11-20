@@ -451,6 +451,18 @@
   <p style="font-size:12.5px;color:#888;margin-top:10px;">非表示の点はタップでも選べません。<b>画面に入っている点が多いときは、自動で「点だけ表示」になります</b>（［各種設定］で変えられます）。</p>
 </div></div>
 
+<!-- 地籍調査未終了地区の公図を小字別に確認 -->
+<div class="panel" id="jibanAreaPanel"><div class="sheet">
+  <h2>小字別 公図一覧<button type="button" class="close" onclick="closePanel('jibanAreaPanel')">✕</button></h2>
+  <div class="noteBox" style="margin-bottom:10px;">取り込んだ法務局の任意座標XMLを、市区町村・大字・小字で自動整理します。任意座標のため実際の位置は持たず、地図に合わせる場合はレイヤ画面の［位置合わせ］を使います。</div>
+  <div class="formRow" style="margin-bottom:6px;">
+    <label for="jibanAreaSearch">小字を検索</label>
+    <input id="jibanAreaSearch" type="search" placeholder="市区町村・大字・小字" oninput="jibanRenderAreas(this.value)">
+  </div>
+  <div id="jibanAreaCount" style="font-size:13px;color:#667085;margin:4px 0 8px;"></div>
+  <div id="jibanAreaRows"></div>
+</div></div>
+
 <!-- 画面の表示設定 -->
 <div class="panel" id="dispPanel"><div class="sheet">
   <h2><span id="dispTitle">表示設定</span><button type="button" class="close" onclick="closePanel('dispPanel')">✕</button></h2>
@@ -642,7 +654,8 @@
   <ul>
     <li>初期状態は「非表示」です。使うときだけ「表示」にしてください。<b>初回表示には通信が必要</b>です。</li>
     <li>法務省の登記所備付地図データのうち、地図上へそのまま重ねられる<b>公共座標の区域</b>が対象です。任意座標の区域など、何も出ない場所があります。</li>
-    <li>任意座標の公図は、これまでどおり同じレイヤ画面の<b>［地図XML（.xml／.zip）を取り込む］</b>から読み、2点で位置合わせしてください。</li>
+    <li>任意座標の公図は、同じレイヤ画面の<b>［地図XML（.xml／.zip）を取り込む］</b>から読みます。取り込み後の<b>［小字別に公図を見る］</b>で市区町村・大字・小字から探せます。</li>
+    <li>任意座標の公図を地図に重ねる場合は、図面ごとに<b>［位置合わせ］</b>で2点を合わせてください。</li>
     <li>表示は参考です。境界の確定や登記の証明には使えません。</li>
   </ul>
   <h3>背景地図と航空写真</h3>

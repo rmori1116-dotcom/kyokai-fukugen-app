@@ -631,6 +631,18 @@
   <p style="font-size:12.5px;color:#888;margin-top:10px;">非表示の点はタップでも選べません。<b>画面に入っている点が多いときは、自動で「点だけ表示」になります</b>（［各種設定］で変えられます）。</p>
 </div></div>
 
+<!-- 地籍調査未終了地区の公図を小字別に確認 -->
+<div class="panel" id="jibanAreaPanel"><div class="sheet">
+  <h2>小字別 公図一覧<button type="button" class="close" onclick="closePanel('jibanAreaPanel')">✕</button></h2>
+  <div class="noteBox" style="margin-bottom:10px;">取り込んだ法務局の任意座標XMLを、市区町村・大字・小字で自動整理します。任意座標のため実際の位置は持たず、地図に合わせる場合はレイヤ画面の［位置合わせ］を使います。</div>
+  <div class="formRow" style="margin-bottom:6px;">
+    <label for="jibanAreaSearch">小字を検索</label>
+    <input id="jibanAreaSearch" type="search" placeholder="市区町村・大字・小字" oninput="jibanRenderAreas(this.value)">
+  </div>
+  <div id="jibanAreaCount" style="font-size:13px;color:#667085;margin:4px 0 8px;"></div>
+  <div id="jibanAreaRows"></div>
+</div></div>
+
 <!-- 画面の表示設定 -->
 <div class="panel" id="dispPanel"><div class="sheet">
   <h2><span id="dispTitle">表示設定</span><button type="button" class="close" onclick="closePanel('dispPanel')">✕</button></h2>
@@ -822,7 +834,8 @@
   <ul>
     <li>初期状態は「非表示」です。使うときだけ「表示」にしてください。<b>初回表示には通信が必要</b>です。</li>
     <li>法務省の登記所備付地図データのうち、地図上へそのまま重ねられる<b>公共座標の区域</b>が対象です。任意座標の区域など、何も出ない場所があります。</li>
-    <li>任意座標の公図は、これまでどおり同じレイヤ画面の<b>［地図XML（.xml／.zip）を取り込む］</b>から読み、2点で位置合わせしてください。</li>
+    <li>任意座標の公図は、同じレイヤ画面の<b>［地図XML（.xml／.zip）を取り込む］</b>から読みます。取り込み後の<b>［小字別に公図を見る］</b>で市区町村・大字・小字から探せます。</li>
+    <li>任意座標の公図を地図に重ねる場合は、図面ごとに<b>［位置合わせ］</b>で2点を合わせてください。</li>
     <li>表示は参考です。境界の確定や登記の証明には使えません。</li>
   </ul>
   <h3>背景地図と航空写真</h3>
@@ -869,7 +882,7 @@
 const APP_NAME    = '境界復元';
 const APP_EDITION = '地図版';
 const APP_VERSION = 'v0.11';
-const APP_BUILD   = '2026-11-20 (466b24daff3e)';          // ビルド時に日付と版ハッシュが入る
+const APP_BUILD   = '2026-11-20 (8f15413982f0)';          // ビルド時に日付と版ハッシュが入る
 function appTitle(){ return `${APP_NAME} ${APP_EDITION} ${APP_VERSION}`; }
 function appFull(){  return `境界復元支援アプリ（${APP_EDITION}）${APP_VERSION}`; }
 
@@ -5106,7 +5119,7 @@ const JIBAN_LABEL_MIN_W = 30;        // 筆が画面でこれより狭ければ�
 const JIBAN_FREE_COLOR = '#e8590c';  // 任意座標系（公図）の色
 const JIBAN_CREDIT = '地番図：法務省 登記所備付地図データ（G空間情報センター）　参考表示';
 const J = { loaded:false, items:[], data:{}, alpha:0.85, color:'#c2255c', labels:true,
-            sel:null, place:null, busy:false, dense:false };
+            sel:null, place:null, area:null, busy:false, dense:false };
 
 /* ---------- 座標のやりとり ---------- */
 function jibanToPlane(x,y){      // 地図の座標 → 平面直角（東,北）
@@ -5288,6 +5301,91 @@ function jibanBBox(parcels){
     if(r[i]<x0)x0=r[i]; if(r[i]>x1)x1=r[i]; if(r[i+1]<y0)y0=r[i+1]; if(r[i+1]>y1)y1=r[i+1]; } }
   return [x0,y0,x1,y1];
 }
+
+/* ---------- 地籍調査未終了地区（任意座標系）を小字別に見る ---------- */
+function jibanAreaParts(ds,p){
+  return [ds.city||'',p.o||'',p.a||'',p.k||'',p.y||''].map(v=>String(v).trim());
+}
+function jibanAreaKey(ds,p){ return JSON.stringify(jibanAreaParts(ds,p)); }
+function jibanAreaLabel(parts){
+  const area=parts.slice(1).filter(Boolean).join(' ');
+  return area||'（小字名なし）';
+}
+function jibanAreaGroups(){
+  if(J._areas) return J._areas;
+  const map=new Map();
+  for(const ds of J.items){
+    if(ds.kind!=='free' || !J.data[ds.id]) continue;
+    for(const p of J.data[ds.id]){
+      const parts=jibanAreaParts(ds,p), key=JSON.stringify(parts);
+      let g=map.get(key);
+      if(!g){ g={ key, parts, city:parts[0], label:jibanAreaLabel(parts), n:0, sets:new Map() }; map.set(key,g); }
+      g.n++;
+      g.sets.set(ds.id,(g.sets.get(ds.id)||0)+1);
+    }
+  }
+  return (J._areas=Array.from(map.values()));
+}
+function jibanAreaMatch(ds,i){
+  if(!J.area) return true;
+  if(ds.kind!=='free' || (J.area.dsId && J.area.dsId!==ds.id)) return false;
+  if(J.area.indexSet && J.area.dsId===ds.id) return J.area.indexSet.has(i);
+  const p=J.data[ds.id]&&J.data[ds.id][i];
+  return !!p && jibanAreaKey(ds,p)===J.area.key;
+}
+function jibanAreaIndices(ds){
+  const p=J.data[ds.id]||[], out=[];
+  for(let i=0;i<p.length;i++) if(jibanAreaMatch(ds,i)) out.push(i);
+  return out;
+}
+function jibanAreaEnc(v){ return encodeURIComponent(v).replace(/'/g,'%27'); }
+function openJibanAreas(){
+  closePanel('layerPanel');
+  const q=document.getElementById('jibanAreaSearch'); if(q) q.value='';
+  jibanRenderAreas('');
+  openPanel('jibanAreaPanel');
+}
+function jibanRenderAreas(query){
+  const box=document.getElementById('jibanAreaRows'); if(!box) return;
+  const q=String(query||'').trim().toLocaleLowerCase('ja');
+  const all=jibanAreaGroups();
+  const groups=q ? all.filter(g=>(g.city+' '+g.label).toLocaleLowerCase('ja').includes(q)) : all;
+  document.getElementById('jibanAreaCount').textContent=`${groups.length}小字（任意座標XML ${new Set(groups.flatMap(g=>Array.from(g.sets.keys()))).size}図面）`;
+  if(!all.length){
+    box.innerHTML='<div class="noteBox">地籍調査未終了地区のXMLがまだありません。レイヤ画面の［地図XMLを取り込む］から、市区町村ZIPまたはXMLを選んでください。</div>';
+    return;
+  }
+  if(!groups.length){ box.innerHTML='<p style="color:#888;font-size:14px;">一致する小字がありません。</p>'; return; }
+  const shown=groups.slice(0,300);
+  box.innerHTML=shown.map(g=>{
+    const files=Array.from(g.sets.entries()).map(([id,n])=>{
+      const ds=J.items.find(d=>d.id===id); if(!ds) return '';
+      return `<button type="button" class="saveBtn" style="margin:7px 0 0;background:#fff1e6;color:#9a3412;box-shadow:none;border:1px solid #fdba74;text-align:left;"
+        onclick="jibanAreaOpen('${jibanAreaEnc(g.key)}','${id}')"><b>このXMLを見る</b><br><span style="font-size:12px;font-weight:normal;">${esc(ds.name)}　${n}筆</span></button>`;
+    }).join('');
+    return `<section style="padding:12px 0;border-bottom:1px solid #e2e8ee;">
+      <div style="display:flex;gap:8px;align-items:flex-start;"><div style="flex:1;"><b style="font-size:16px;color:#1e3a5f;">${esc(g.label)}</b>
+      <div style="font-size:12.5px;color:#667085;margin-top:3px;">${esc(g.city||'市区町村名なし')}</div></div>
+      <span class="coords">${g.n}筆／${g.sets.size}図面</span></div>${files}</section>`;
+  }).join('')+(groups.length>shown.length?`<p class="noteBox">先頭の${shown.length}小字を表示しています。上の検索欄で絞り込んでください。</p>`:'');
+}
+function jibanAreaOpen(encodedKey,dsId){
+  const key=decodeURIComponent(encodedKey), g=jibanAreaGroups().find(x=>x.key===key);
+  const ds=J.items.find(d=>d.id===dsId && d.kind==='free');
+  if(!g||!ds){ toast('選んだ小字のXMLが見つかりません'); return; }
+  const indices=[];
+  for(let i=0;i<J.data[ds.id].length;i++) if(jibanAreaKey(ds,J.data[ds.id][i])===key) indices.push(i);
+  J.area={ key, dsId, label:g.label, city:g.city, indices, indexSet:new Set(indices) };
+  store.layers.jiban=true; ds.hidden=false; J.sel=null; save();
+  closePanel('jibanAreaPanel');
+  jibanFit(dsId,true);
+  toast(`${g.label}の公図を表示しました`);
+}
+function jibanAreaClear(showLayers){
+  J.area=null; J.sel=null; draw();
+  if(showLayers) openLayers();
+  else if(panelOpen('jibanAreaPanel')) jibanRenderAreas(document.getElementById('jibanAreaSearch').value);
+}
 async function jibanImportFiles(fileList){
   if(J.busy){ toast('取り込み中です'); return; }
   const files=Array.from(fileList||[]); if(!files.length) return;
@@ -5327,7 +5425,7 @@ async function jibanImportFiles(fileList){
       if(old>=0){ const o=J.items[old]; if(meta.kind==='free'&&o.placed){ meta.tf=o.tf; meta.placed=true; } await jibanDrop(o.id,true); }
       meta.id=jibanId(); meta.ts=Date.now(); meta.hidden=false;
       await idbPut(DB_STORE, JSON.stringify(parcels), JIBAN_DATA+meta.id);
-      J.data[meta.id]=parcels; J.items.push(meta); made.push(meta);
+      J.data[meta.id]=parcels; J.items.push(meta); made.push(meta); J._areas=null;
     };
     for(const g of pub.values())
       await put({ name:`${g.city||'地図'}（公共座標${g.zone}系）`, city:g.city, kind:'pub', zone:g.zone, n:g.parcels.length,
@@ -5374,7 +5472,9 @@ function jibanPick(){
 async function jibanDrop(id, keepIndex){
   const i=J.items.findIndex(d=>d.id===id); if(i<0) return;
   J.items.splice(i,1); delete J.data[id];
+  J._areas=null;
   if(J.sel && J.sel.id===id) J.sel=null;
+  if(J.area && J.area.dsId===id) J.area=null;
   try{ await idbReq(DB_STORE,'readwrite',s=>s.delete(JIBAN_DATA+id)); }catch(e){}
   if(!keepIndex) await jibanSaveIndex();
 }
@@ -5478,17 +5578,24 @@ function jibanLabelPoint(c,i){   // 地番を置く場所（筆の内側）
 /* ---------- 描画 ---------- */
 function jibanSets(){
   if(store.layers.jiban===false) return [];
-  return J.items.filter(d=>!d.hidden && J.data[d.id]);
+  return J.items.filter(d=>!d.hidden && J.data[d.id] && (!J.area ||
+    (d.kind==='free' && (!J.area.dsId || J.area.dsId===d.id) && J.data[d.id].some((_,i)=>jibanAreaMatch(d,i)))));
 }
 function jibanView(){
   const a=toMap(0,0), b=toMap(W,H);
   return [Math.min(a[0],b[0]), Math.min(a[1],b[1]), Math.max(a[0],b[0]), Math.max(a[1],b[1])];
 }
-function jibanVisible(c,v){
+function jibanVisible(c,v,ds){
   const out=[]; const bb=c.bb;
-  for(let i=0;i<bb.length;i+=4){
-    if(bb[i+2]<v[0]||bb[i]>v[2]||bb[i+3]<v[1]||bb[i+1]>v[3]) continue;
-    out.push(i/4);
+  const only=J.area && ds && J.area.dsId===ds.id ? J.area.indices : null;
+  const check=pi=>{ const i=pi*4;
+    if(bb[i+2]<v[0]||bb[i]>v[2]||bb[i+3]<v[1]||bb[i+1]>v[3]) return;
+    out.push(pi);
+  };
+  if(only){ for(const pi of only) check(pi); }
+  else for(let i=0;i<bb.length;i+=4){
+    if(ds && !jibanAreaMatch(ds,i/4)) continue;
+    check(i/4);
   }
   return out;
 }
@@ -5502,7 +5609,7 @@ function drawJiban(){
   const v=jibanView(), jobs=[]; let total=0;
   for(const ds of sets){
     const c=jibanCache(ds); if(!c) continue;
-    const vis=jibanVisible(c,v); total+=vis.length; jobs.push([ds,c,vis]);
+    const vis=jibanVisible(c,v,ds); total+=vis.length; jobs.push([ds,c,vis]);
   }
   if(total>JIBAN_DRAW_MAX){ J.dense=true; return; }
   const s=state.view.scale, cx=state.view.cx, cy=state.view.cy;
@@ -5538,7 +5645,7 @@ function drawJibanLabels(){
     let nLab=0;
     for(const ds of sets){
       const c=jibanCache(ds); if(!c) continue;
-      const vis=jibanVisible(c,v);
+      const vis=jibanVisible(c,v,ds);
       if(vis.length) drewAny=true;
       if(!J.labels || J.dense) continue;
       const parcels=J.data[ds.id];
@@ -5611,7 +5718,7 @@ function jibanHit(sx,sy){
   const [mx,my]=toMap(sx,sy);
   for(const ds of jibanSets()){
     const c=jibanCache(ds); if(!c) continue;
-    for(let i=0;i<c.rs.length;i++){
+    for(const i of jibanVisible(c,[mx,my,mx,my],ds)){
       const o=4*i;
       if(mx<c.bb[o]||mx>c.bb[o+2]||my<c.bb[o+1]||my>c.bb[o+3]) continue;
       if(jibanInside(c.rs[i],mx,my)) return { ds, i };
@@ -5677,7 +5784,7 @@ function jibanNearestVertex(ds,sx,sy,thr){
   const c=jibanCache(ds); if(!c) return null;
   const v=jibanView(), parcels=J.data[ds.id], s=state.view.scale;
   let best=null, bd=thr;
-  for(const i of jibanVisible(c,v)){
+  for(const i of jibanVisible(c,v,ds)){
     const rings=c.rs[i];
     for(let k=0;k<rings.length;k++){
       const r=rings[k];
@@ -5736,20 +5843,22 @@ function jibanPlaceTap(sx,sy){
 }
 
 /* ---------- レイヤ画面 ---------- */
-function jibanFit(id){
+function jibanFit(id, areaOnly){
+  if(!areaOnly) J.area=null;
   const ds=J.items.find(d=>d.id===id), c=ds&&jibanCache(ds); if(!c||!c.rs.length) return;
   let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
-  for(let i=0;i<c.bb.length;i+=4){
+  for(const pi of jibanAreaIndices(ds)){ const i=pi*4;
     if(c.bb[i]<x0)x0=c.bb[i]; if(c.bb[i+2]>x1)x1=c.bb[i+2];
     if(c.bb[i+1]<y0)y0=c.bb[i+1]; if(c.bb[i+3]>y1)y1=c.bb[i+3];
   }
   if(!isFinite(x0)) return;
   closePanel('layerPanel');
+  closePanel('jibanAreaPanel');
   fitToBox([x0,x1],[y0,y1]);
   /* 市区町村全体のように広い範囲だと筆が多すぎて描かれないので、画面に筆が収まる程度まで寄せる */
   let guard=0;
   while(guard++<8){
-    const vis=jibanVisible(c,jibanView()).length;
+    const vis=jibanVisible(c,jibanView(),ds).length;
     if(vis<=JIBAN_DRAW_MAX*0.8) break;
     state.view.scale=clampScale(state.view.scale*1.6);
   }
@@ -5776,6 +5885,11 @@ function jibanLayerHtml(){
   <div class="listRow" style="padding-top:0;">
     <button type="button" class="del" style="background:${J.labels?'#e7f0fb':'#f0f0f0'};color:${J.labels?'#1e73d2':'#999'};min-width:52px;" onclick="jibanToggleLabels()">${J.labels?'地番あり':'地番なし'}</button>
     <button type="button" class="del" style="flex:1;background:#e7f0fb;color:#1e3a5f;" onclick="jibanPick()">地図XML（.xml／.zip）を取り込む</button></div>`;
+  const nArea=jibanAreaGroups().length;
+  if(nArea) h+=`<div class="listRow" style="padding-top:0;">
+    <button type="button" class="saveBtn" style="margin:0;flex:1;background:#e8590c;" onclick="openJibanAreas()">小字別に公図を見る（${nArea}小字）</button>
+    ${J.area?`<button type="button" class="del" onclick="jibanAreaClear(true)">全XML表示</button>`:''}</div>`;
+  if(J.area) h+=`<div class="noteBox" style="margin:0 0 8px;border-color:#fdba74;background:#fff7ed;"><b>表示中：${esc(J.area.label)}</b><br>${esc(J.area.city||'')}／選択したXMLだけを表示しています。</div>`;
   for(const d of J.items){
     const free=d.kind==='free';
     h+=`<div class="listRow">${tog(`jibanToggleDs('${d.id}')`,!d.hidden)}

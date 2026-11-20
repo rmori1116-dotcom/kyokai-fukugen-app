@@ -52,7 +52,7 @@ const ZONE=1;   // 既定の系（アプリの初期値は1系）
 const pubParcels=[ {t:'101', v:sq(1000,2000,20,30)}, {t:'102-1', v:sq(1020,2000,20,30)}, {t:'103', v:sq(1000,2030,40,25)} ];
 const pubXml = mapXml({ crs:`公共座標${ZONE}系`, name:'公共地区', parcels:pubParcels });
 /* 公図：実際の位置を持たない局所座標。縮尺0.5で、30度回して置いてあるものとして作る */
-const free0=[ {t:'1', v:sq(0,0,40,60)}, {t:'2', v:sq(40,0,40,60)}, {t:'3', v:sq(0,60,80,40)} ];
+const free0=[ {t:'1', k:'小字甲', v:sq(0,0,40,60)}, {t:'2', k:'小字甲', v:sq(40,0,40,60)}, {t:'3', k:'小字乙', v:sq(0,60,80,40)} ];
 const freeXml = mapXml({ crs:'任意座標系', name:'公図甲', parcels:free0 });
 
 /* ---- zip（deflate）を作る ---- */
@@ -123,6 +123,22 @@ const zip=makeZip([['a/公共2.xml', pubXml.replace('公共地区','公共地区
 await page.evaluate(async fs=>{ await jibanImportFiles(fs.map(f=>new File([new Uint8Array(f.data)],f.name))); },[toFile('muni.zip',zip)]);
 st=await page.evaluate(()=>({ items:J.items.map(d=>[d.kind,d.n,d.placed]), keys:null }));
 eq('zipからも取り込める（公共は同名で置き換え、公図が追加）', JSON.stringify(st.items), JSON.stringify([['pub',3,true],['free',3,false]]));
+
+/* 2.1 任意座標XMLを小字別に整理して表示 */
+const ag=await page.evaluate(()=>jibanAreaGroups().map(g=>[g.label,g.n,g.sets.size]));
+eq('任意座標XMLを小字別に整理する', JSON.stringify(ag), JSON.stringify([['大字テスト 小字甲',2,1],['大字テスト 小字乙',1,1]]));
+ok('小字別一覧画面がある', await page.evaluate(()=>!!document.getElementById('jibanAreaPanel')));
+await page.evaluate(()=>{ openJibanAreas(); document.getElementById('jibanAreaSearch').value='乙'; jibanRenderAreas('乙'); });
+ok('小字名で検索できる', await page.evaluate(()=>document.getElementById('jibanAreaRows').textContent.includes('小字乙') && !document.getElementById('jibanAreaRows').textContent.includes('小字甲')));
+const focused=await page.evaluate(()=>{
+  const g=jibanAreaGroups().find(x=>x.label.includes('小字乙')), id=Array.from(g.sets.keys())[0];
+  jibanAreaOpen(encodeURIComponent(g.key),id);
+  const ds=J.items.find(d=>d.id===id), c=jibanCache(ds);
+  return { label:J.area.label, sets:jibanSets().length, vis:jibanVisible(c,[-1e9,-1e9,1e9,1e9],ds).length };
+});
+eq('選んだ小字だけに絞る', focused.label, '大字テスト 小字乙');
+eq('選んだXMLだけを表示する', focused.sets, 1); eq('選んだ小字の筆だけを表示する', focused.vis, 1);
+await page.evaluate(()=>jibanAreaClear(false));
 
 /* 3. 描画・属性表示（公共座標） */
 await page.evaluate(()=>{ const d=J.items.find(x=>x.kind==='pub'); jibanFit(d.id); });
@@ -215,6 +231,7 @@ ok('レイヤ画面に地番図が出る', html.includes('地番図（法務省 
 ok('レイヤ画面に法務局地番図が出る', html.includes('法務局地番図（事前取込不要）'));
 ok('法務局地番図は事前取込不要と案内', html.includes('現在地周辺だけを通信で読み込みます'));
 ok('取り込みボタンがある', html.includes('jibanPick()')); ok('位置合わせボタンがある（公図のみ）', (html.match(/位置合わせ/g)||[]).length===1, (html.match(/位置合わせ/g)||[]).length);
+ok('小字別に公図を見るボタンがある', html.includes('小字別に公図を見る'));
 await page.evaluate(()=>toggleLayer('nationalJiban'));
 eq('法務局地番図を表示へ切り替えられる', await page.evaluate(()=>store.layers.nationalJiban), true);
 ok('法務局地番図の表示状態がレイヤ画面へ反映', await page.evaluate(()=>nationalJibanLayerHtml().includes('>表示</button>')));
